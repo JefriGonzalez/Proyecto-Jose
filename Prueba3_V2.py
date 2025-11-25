@@ -18,6 +18,35 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+
+import pandas as pd
+import streamlit as st
+
+# -----------------------------------------------------
+# 1. COLOCA AQUÍ TU LINK DIRECTO DE ONEDRIVE
+#    Ejemplo: "https://onedrive.live.com/download?cid=XXX&resid=YYY&authkey=ZZZ"
+# -----------------------------------------------------
+onedrive_url = "AQUI_PONES_TU_LINK_DIRECTO"
+
+# -----------------------------------------------------
+# 2. FUNCIÓN PARA CARGAR AUTOMÁTICAMENTE EL EXCEL
+#    Se refresca sola cada 60 segundos (puedes cambiarlo)
+# -----------------------------------------------------
+@st.cache_data(ttl=60)
+def cargar_excel():
+    return pd.read_excel(onedrive_url)
+
+# -----------------------------------------------------
+# 3. CARGAR AUTOMÁTICAMENTE EL ARCHIVO DESDE ONEDRIVE
+# -----------------------------------------------------
+try:
+    df = cargar_excel()
+except Exception as e:
+    st.error("❌ Error al cargar el archivo desde OneDrive.")
+    st.error(str(e))
+    st.stop()
+
+
 # --- FUNCIÓN PARA CARGAR DATOS ---
 @st.cache_data
 def load_data(file_or_path):
