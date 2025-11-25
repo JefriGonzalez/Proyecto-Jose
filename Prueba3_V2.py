@@ -36,27 +36,19 @@ import streamlit as st
 url = "https://docs.google.com/spreadsheets/d/1uK0DYRCkaVBAqB2jUT0k50p1HC_EHDjd/export?format=xlsx"
 
 
-@st.cache_data(ttl=30)  # refresca cada 30 segundos
-def cargar_excel():
-    return pd.read_excel(url, engine="openpyxl")
+@st.cache_data(ttl=60)  # refresca cada 60 segundos
+def load_from_google_sheet():
+    try:
+        df = pd.read_excel(url, engine="openpyxl")
+        return clean_data(df)
+    except Exception as e:
+        st.error(f"Error al cargar desde Google Sheet: {e}")
+        return None
 
 # --- FUNCIÓN PARA CARGAR DATOS ---
-@st.cache_data
-def load_data(file_or_path):
+# --- FUNCIÓN DE LIMPIEZA DE DATOS (REUTILIZABLE) ---
+def clean_data(df):
     try:
-        # Si es un string (ruta), leer desde ahí
-        if isinstance(file_or_path, str):
-            if file_or_path.endswith('.xlsx') or file_or_path.endswith('.xls'):
-                df = pd.read_excel(file_or_path)
-            else:
-                df = pd.read_csv(file_or_path)
-        # Si es un objeto archivo (UploadedFile)
-        else:
-            if file_or_path.name.endswith('.xlsx') or file_or_path.name.endswith('.xls'):
-                df = pd.read_excel(file_or_path)
-            else:
-                df = pd.read_csv(file_or_path)
-        
         # Limpieza de nombres de columnas
         df.columns = df.columns.str.strip()
         
@@ -101,7 +93,29 @@ def load_data(file_or_path):
         
         return df
     except Exception as e:
-        st.error(f"Error al procesar el archivo: {e}")
+        st.error(f"Error al procesar los datos: {e}")
+        return None
+
+# --- FUNCIÓN PARA CARGAR DATOS (ARCHIVO LOCAL/UPLOAD) ---
+@st.cache_data
+def load_data(file_or_path):
+    try:
+        # Si es un string (ruta), leer desde ahí
+        if isinstance(file_or_path, str):
+            if file_or_path.endswith('.xlsx') or file_or_path.endswith('.xls'):
+                df = pd.read_excel(file_or_path)
+            else:
+                df = pd.read_csv(file_or_path)
+        # Si es un objeto archivo (UploadedFile)
+        else:
+            if file_or_path.name.endswith('.xlsx') or file_or_path.name.endswith('.xls'):
+                df = pd.read_excel(file_or_path)
+            else:
+                df = pd.read_csv(file_or_path)
+        
+        return clean_data(df)
+    except Exception as e:
+        st.error(f"Error al leer el archivo: {e}")
         return None
 
 # --- GESTIÓN DE CONFIGURACIÓN (ONEDRIVE) ---
@@ -149,18 +163,24 @@ with st.sidebar:
                 st.error("La ruta no existe. Verifica e intenta de nuevo.")
     
     # Lógica de Selección de Archivo
-    file_to_process = None
+    df = None
     source_msg = ""
     
     if uploaded_file is not None:
-        file_to_process = uploaded_file
-        source_msg = "Archivo cargado manualmente."
-    elif saved_path and os.path.exists(saved_path):
-        file_to_process = saved_path
-        source_msg = f"✅ Archivo cargado automáticamente desde: `{os.path.basename(saved_path)}`"
+        df = load_data(uploaded_file)
+        source_msg = "📂 Archivo cargado manualmente."
+    else:
+        # Por defecto, intentar cargar desde Google Sheet
+        df = load_from_google_sheet()
+        if df is not None:
+            source_msg = "🌐 Datos cargados desde Google Sheet (En vivo)."
+        elif saved_path and os.path.exists(saved_path):
+            # Fallback a OneDrive si falla Google Sheet y existe config
+            df = load_data(saved_path)
+            source_msg = f"📂 Archivo cargado desde OneDrive: `{os.path.basename(saved_path)}`"
+    
+    if source_msg:
         st.success(source_msg)
-    elif saved_path:
-        st.warning(f"⚠️ No se encontró el archivo en la ruta guardada: {saved_path}")
 
     st.markdown("---")
     st.info("El sistema detecta automáticamente duplicidad de programas y genera cronogramas comparativos.")
@@ -175,10 +195,7 @@ with st.sidebar:
             else:
                 st.warning("Por favor escribe algo antes de enviar.")
 
-if file_to_process is not None:
-    df = load_data(file_to_process)
-    
-    if df is not None:
+if df is not None:
         # Crear 4 pestañas
         tab1, tab2, tab3, tab4 = st.tabs([
             "🔍 Agenda Individual", 
@@ -1251,4 +1268,4 @@ if file_to_process is not None:
 
 
 else:
-    st.info("👆 Sube el archivo CSV para comenzar.")
+    st.error("❌ No se pudieron cargar datos. Por favor sube un archivo o verifica la conexión con Google Sheet.")
