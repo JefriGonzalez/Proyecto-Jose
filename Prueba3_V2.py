@@ -33,9 +33,10 @@ import streamlit as st
 # 2. FUNCIÓN PARA CARGAR AUTOMÁTICAMENTE EL EXCEL
 #    Se refresca sola cada 60 segundos (puedes cambiarlo)
 # -----------------------------------------------------
-@st.cache_data(ttl=60)
+url = "https://docs.google.com/spreadsheets/d/1uK0DYRCkaVBAqB2jUT0k50p1HC_EHDjd/export?format=xlsx"
+
+@st.cache_data(ttl=30)  # refresca cada 30 segundos
 def cargar_excel():
-    url = "https://alumnosuaicl-my.sharepoint.com/:u:/g/personal/javier_silva_c_uai_cl/EW6UyrrQQdtOj-lSMWzmS7ABNWxDZ4BbXiCd0NIkzjf5Pg?download=1"
     return pd.read_excel(url, engine="openpyxl")
 
 # -----------------------------------------------------
