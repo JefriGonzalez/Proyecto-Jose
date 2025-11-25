@@ -26,7 +26,8 @@ import streamlit as st
 # 1. COLOCA AQUÍ TU LINK DIRECTO DE ONEDRIVE
 #    Ejemplo: "https://onedrive.live.com/download?cid=XXX&resid=YYY&authkey=ZZZ"
 # -----------------------------------------------------
-onedrive_url = https://alumnosuaicl-my.sharepoint.com/:x:/g/personal/javier_silva_c_uai_cl/EW6UyrrQQdtOj-lSMWzmS7ABNWxDZ4BbXiCd0NIkzjf5Pg?e=3GHCUQ
+onedrive_url = "https://alumnosuaicl-my.sharepoint.com/:u:/g/personal/javier_silva_c_uai_cl/EW6UyrrQQdtOj-lSMWzmS7ABNWxDZ4BbXiCd0NIkzjf5Pg?download=1"
+
 
 # -----------------------------------------------------
 # 2. FUNCIÓN PARA CARGAR AUTOMÁTICAMENTE EL EXCEL
