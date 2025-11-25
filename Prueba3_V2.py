@@ -40,10 +40,6 @@ url = "https://docs.google.com/spreadsheets/d/1uK0DYRCkaVBAqB2jUT0k50p1HC_EHDjd/
 def cargar_excel():
     return pd.read_excel(url, engine="openpyxl")
 
-df = cargar_excel()
-
-st.dataframe(df)
-
 # --- FUNCIÓN PARA CARGAR DATOS ---
 @st.cache_data
 def load_data(file_or_path):
