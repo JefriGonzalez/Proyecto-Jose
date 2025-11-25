@@ -35,6 +35,7 @@ import streamlit as st
 # -----------------------------------------------------
 url = "https://docs.google.com/spreadsheets/d/1uK0DYRCkaVBAqB2jUT0k50p1HC_EHDjd/export?format=xlsx"
 
+
 @st.cache_data(ttl=30)  # refresca cada 30 segundos
 def cargar_excel():
     return pd.read_excel(url, engine="openpyxl")
