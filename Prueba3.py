@@ -20,13 +20,20 @@ st.markdown("""
 
 # --- FUNCIÓN PARA CARGAR DATOS ---
 @st.cache_data
-def load_data(file):
+def load_data(file_or_path):
     try:
-        # Detectar tipo de archivo y leer apropiadamente
-        if file.name.endswith('.xlsx') or file.name.endswith('.xls'):
-            df = pd.read_excel(file)
+        # Si es un string (ruta), leer desde ahí
+        if isinstance(file_or_path, str):
+            if file_or_path.endswith('.xlsx') or file_or_path.endswith('.xls'):
+                df = pd.read_excel(file_or_path)
+            else:
+                df = pd.read_csv(file_or_path)
+        # Si es un objeto archivo (UploadedFile)
         else:
-            df = pd.read_csv(file)
+            if file_or_path.name.endswith('.xlsx') or file_or_path.name.endswith('.xls'):
+                df = pd.read_excel(file_or_path)
+            else:
+                df = pd.read_csv(file_or_path)
         
         # Limpieza de nombres de columnas
         df.columns = df.columns.str.strip()
@@ -75,6 +82,22 @@ def load_data(file):
         st.error(f"Error al procesar el archivo: {e}")
         return None
 
+# --- GESTIÓN DE CONFIGURACIÓN (ONEDRIVE) ---
+import json
+import os
+
+CONFIG_FILE = 'config_onedrive.json'
+
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+def save_config(path):
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump({'onedrive_path': path}, f)
+
 # --- INTERFAZ PRINCIPAL ---
 st.title("🎓 Dashboard de Gestión Académica")
 st.markdown("---")
@@ -82,7 +105,41 @@ st.markdown("---")
 # SIDEBAR
 with st.sidebar:
     st.header("📂 Configuración")
-    uploaded_file = st.file_uploader("Sube tu archivo CSV", type=["csv", "xlsx"])
+    
+    # 1. Carga Manual
+    uploaded_file = st.file_uploader("Sube tu archivo CSV/Excel (Prioritario)", type=["csv", "xlsx"])
+    
+    st.markdown("---")
+    
+    # 2. Configuración Automática (OneDrive)
+    config = load_config()
+    saved_path = config.get('onedrive_path', '')
+    
+    with st.expander("⚙️ Configuración Ruta Automática (OneDrive)", expanded=not bool(saved_path)):
+        st.write("Configura una ruta local para cargar el archivo automáticamente al iniciar.")
+        input_path = st.text_input("Ruta absoluta del archivo:", value=saved_path)
+        if st.button("Guardar Ruta"):
+            if os.path.exists(input_path):
+                save_config(input_path)
+                st.success("¡Ruta guardada! Recarga la página.")
+                st.rerun()
+            else:
+                st.error("La ruta no existe. Verifica e intenta de nuevo.")
+    
+    # Lógica de Selección de Archivo
+    file_to_process = None
+    source_msg = ""
+    
+    if uploaded_file is not None:
+        file_to_process = uploaded_file
+        source_msg = "Archivo cargado manualmente."
+    elif saved_path and os.path.exists(saved_path):
+        file_to_process = saved_path
+        source_msg = f"✅ Archivo cargado automáticamente desde: `{os.path.basename(saved_path)}`"
+        st.success(source_msg)
+    elif saved_path:
+        st.warning(f"⚠️ No se encontró el archivo en la ruta guardada: {saved_path}")
+
     st.markdown("---")
     st.info("El sistema detecta automáticamente duplicidad de programas y genera cronogramas comparativos.")
     
@@ -96,8 +153,8 @@ with st.sidebar:
             else:
                 st.warning("Por favor escribe algo antes de enviar.")
 
-if uploaded_file is not None:
-    df = load_data(uploaded_file)
+if file_to_process is not None:
+    df = load_data(file_to_process)
     
     if df is not None:
         # Crear 4 pestañas
