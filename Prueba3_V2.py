@@ -40,17 +40,6 @@ url = "https://docs.google.com/spreadsheets/d/1uK0DYRCkaVBAqB2jUT0k50p1HC_EHDjd/
 def cargar_excel():
     return pd.read_excel(url, engine="openpyxl")
 
-# -----------------------------------------------------
-# 3. CARGAR AUTOMÁTICAMENTE EL ARCHIVO DESDE ONEDRIVE
-# -----------------------------------------------------
-try:
-    df = cargar_excel()
-except Exception as e:
-    st.error("❌ Error al cargar el archivo desde OneDrive.")
-    st.error(str(e))
-    st.stop()
-
-
 # --- FUNCIÓN PARA CARGAR DATOS ---
 @st.cache_data
 def load_data(file_or_path):
