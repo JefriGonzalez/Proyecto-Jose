@@ -20,20 +20,13 @@ st.markdown("""
 
 # --- FUNCIÓN PARA CARGAR DATOS ---
 @st.cache_data
-def load_data(file_or_path):
+def load_data(file):
     try:
-        # Si es un string (ruta), leer desde ahí
-        if isinstance(file_or_path, str):
-            if file_or_path.endswith('.xlsx') or file_or_path.endswith('.xls'):
-                df = pd.read_excel(file_or_path)
-            else:
-                df = pd.read_csv(file_or_path)
-        # Si es un objeto archivo (UploadedFile)
+        # Detectar tipo de archivo y leer apropiadamente
+        if file.name.endswith('.xlsx') or file.name.endswith('.xls'):
+            df = pd.read_excel(file)
         else:
-            if file_or_path.name.endswith('.xlsx') or file_or_path.name.endswith('.xls'):
-                df = pd.read_excel(file_or_path)
-            else:
-                df = pd.read_csv(file_or_path)
+            df = pd.read_csv(file)
         
         # Limpieza de nombres de columnas
         df.columns = df.columns.str.strip()
@@ -82,22 +75,6 @@ def load_data(file_or_path):
         st.error(f"Error al procesar el archivo: {e}")
         return None
 
-# --- GESTIÓN DE CONFIGURACIÓN (ONEDRIVE) ---
-import json
-import os
-
-CONFIG_FILE = 'config_onedrive.json'
-
-def load_config():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, 'r') as f:
-            return json.load(f)
-    return {}
-
-def save_config(path):
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump({'onedrive_path': path}, f)
-
 # --- INTERFAZ PRINCIPAL ---
 st.title("🎓 Dashboard de Gestión Académica")
 st.markdown("---")
@@ -105,41 +82,7 @@ st.markdown("---")
 # SIDEBAR
 with st.sidebar:
     st.header("📂 Configuración")
-    
-    # 1. Carga Manual
-    uploaded_file = st.file_uploader("Sube tu archivo CSV/Excel (Prioritario)", type=["csv", "xlsx"])
-    
-    st.markdown("---")
-    
-    # 2. Configuración Automática (OneDrive)
-    config = load_config()
-    saved_path = config.get('onedrive_path', '')
-    
-    with st.expander("⚙️ Configuración Ruta Automática (OneDrive)", expanded=not bool(saved_path)):
-        st.write("Configura una ruta local para cargar el archivo automáticamente al iniciar.")
-        input_path = st.text_input("Ruta absoluta del archivo:", value=saved_path)
-        if st.button("Guardar Ruta"):
-            if os.path.exists(input_path):
-                save_config(input_path)
-                st.success("¡Ruta guardada! Recarga la página.")
-                st.rerun()
-            else:
-                st.error("La ruta no existe. Verifica e intenta de nuevo.")
-    
-    # Lógica de Selección de Archivo
-    file_to_process = None
-    source_msg = ""
-    
-    if uploaded_file is not None:
-        file_to_process = uploaded_file
-        source_msg = "Archivo cargado manualmente."
-    elif saved_path and os.path.exists(saved_path):
-        file_to_process = saved_path
-        source_msg = f"✅ Archivo cargado automáticamente desde: `{os.path.basename(saved_path)}`"
-        st.success(source_msg)
-    elif saved_path:
-        st.warning(f"⚠️ No se encontró el archivo en la ruta guardada: {saved_path}")
-
+    uploaded_file = st.file_uploader("Sube tu archivo CSV", type=["csv", "xlsx"])
     st.markdown("---")
     st.info("El sistema detecta automáticamente duplicidad de programas y genera cronogramas comparativos.")
     
@@ -153,8 +96,8 @@ with st.sidebar:
             else:
                 st.warning("Por favor escribe algo antes de enviar.")
 
-if file_to_process is not None:
-    df = load_data(file_to_process)
+if uploaded_file is not None:
+    df = load_data(uploaded_file)
     
     if df is not None:
         # Crear 4 pestañas
@@ -262,6 +205,7 @@ if file_to_process is not None:
                         barmode='group',
                         title="Comparativa de Intensidad Diaria por Coordinadora"
                     )
+                    fig_daily.update_xaxes(tickformat="%d-%m-%Y")
                     fig_daily.add_hline(y=2, line_dash="dot", annotation_text="Carga Normal")
                     st.plotly_chart(fig_daily, use_container_width=True)
                     
@@ -286,6 +230,10 @@ if file_to_process is not None:
                                     if col in detalle_critico.columns:
                                         columnas_disponibles.append(col)
                                 
+                                # Formatear fechas en detalle crítico
+                                if pd.api.types.is_datetime64_any_dtype(detalle_critico['DIAS/FECHAS']):
+                                    detalle_critico['DIAS/FECHAS'] = detalle_critico['DIAS/FECHAS'].dt.strftime('%d-%m-%Y')
+
                                 st.dataframe(
                                     detalle_critico[columnas_disponibles],
                                     hide_index=True,
@@ -301,6 +249,7 @@ if file_to_process is not None:
                         color='Cant_Programas',
                         color_continuous_scale=['#90EE90', '#FF4B4B'] # Verde a Rojo
                     )
+                    fig_daily.update_xaxes(tickformat="%d-%m-%Y")
                     fig_daily.add_hline(y=2, line_dash="dot", annotation_text="Carga Normal")
                     st.plotly_chart(fig_daily, use_container_width=True)
                     
@@ -335,6 +284,10 @@ if file_to_process is not None:
                                 if col in detalle_critico.columns:
                                     columnas_disponibles.append(col)
                             
+                            # Formatear fechas en detalle crítico
+                            if pd.api.types.is_datetime64_any_dtype(detalle_critico['DIAS/FECHAS']):
+                                detalle_critico['DIAS/FECHAS'] = detalle_critico['DIAS/FECHAS'].dt.strftime('%d-%m-%Y')
+
                             st.dataframe(
                                 detalle_critico[columnas_disponibles],
                                 hide_index=True,
@@ -394,7 +347,7 @@ if file_to_process is not None:
                     'Thursday': 'Jueves', 'Friday': 'Viernes', 'Saturday': 'Sábado', 'Sunday': 'Domingo'
                 }
                 resumen_dias['Dia_Semana'] = resumen_dias[fecha_col].dt.strftime('%A').map(dias_semana_esp).fillna(resumen_dias[fecha_col].dt.strftime('%A'))
-                resumen_dias['Fecha_Formato'] = resumen_dias[fecha_col].dt.strftime('%d/%m/%Y')
+                resumen_dias['Fecha_Formato'] = resumen_dias[fecha_col].dt.strftime('%d-%m-%Y')
                 # Ordenar por fecha (y coordinadora si es comparativa)
                 if es_comparativa:
                     resumen_dias = resumen_dias.sort_values(['Coordinadora', fecha_col])
@@ -472,6 +425,11 @@ if file_to_process is not None:
                                         if col in detalle_dia.columns:
                                             columnas_detalle.append(col)
                                     
+                                    # Formatear fechas
+                                    if pd.api.types.is_datetime64_any_dtype(detalle_dia['DIAS/FECHAS']):
+                                        detalle_dia = detalle_dia.copy()
+                                        detalle_dia['DIAS/FECHAS'] = detalle_dia['DIAS/FECHAS'].dt.strftime('%d-%m-%Y')
+
                                     st.dataframe(
                                         detalle_dia[columnas_detalle],
                                         hide_index=True,
@@ -544,6 +502,11 @@ if file_to_process is not None:
                                 if col in detalle_dia.columns:
                                     columnas_detalle.append(col)
                             
+                            # Formatear fechas
+                            if pd.api.types.is_datetime64_any_dtype(detalle_dia['DIAS/FECHAS']):
+                                detalle_dia = detalle_dia.copy()
+                                detalle_dia['DIAS/FECHAS'] = detalle_dia['DIAS/FECHAS'].dt.strftime('%d-%m-%Y')
+
                             st.dataframe(
                                 detalle_dia[columnas_detalle],
                                 hide_index=True,
@@ -563,8 +526,13 @@ if file_to_process is not None:
                 if col in df_coord.columns:
                     columnas_calendario.append(col)
             
+            # Formatear fecha para visualización en tabla
+            df_coord_display = df_coord.copy()
+            if pd.api.types.is_datetime64_any_dtype(df_coord_display['DIAS/FECHAS']):
+                df_coord_display['DIAS/FECHAS'] = df_coord_display['DIAS/FECHAS'].dt.strftime('%d-%m-%Y')
+
             st.dataframe(
-                df_coord[columnas_calendario],
+                df_coord_display[columnas_calendario],
                 hide_index=True,
                 use_container_width=True
             )
@@ -860,7 +828,7 @@ if file_to_process is not None:
             if not dias_choques.empty:
                 # Agregar información de fecha formateada
                 if pd.api.types.is_datetime64_any_dtype(dias_choques['Fecha']):
-                    dias_choques['Fecha_Formato'] = dias_choques['Fecha'].dt.strftime('%d/%m/%Y')
+                    dias_choques['Fecha_Formato'] = dias_choques['Fecha'].dt.strftime('%d-%m-%Y')
                     dias_choques['Dia_Semana'] = dias_choques['Fecha'].dt.strftime('%A')
                     # Mapear días al español
                     dias_semana_map = {
@@ -1129,7 +1097,7 @@ if file_to_process is not None:
                 try:
                     def get_fecha_str(val):
                         if pd.isna(val): return '-'
-                        return val.strftime('%d/%m/%Y')
+                        return val.strftime('%d-%m-%Y')
 
                     def get_horario_str(series):
                         try:
