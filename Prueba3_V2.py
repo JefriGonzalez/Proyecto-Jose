@@ -18,37 +18,16 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-
-import pandas as pd
-import streamlit as st
-
-# -----------------------------------------------------
-# 1. COLOCA AQUÍ TU LINK DIRECTO DE ONEDRIVE
-#    Ejemplo: "https://onedrive.live.com/download?cid=XXX&resid=YYY&authkey=ZZZ"
-# -----------------------------------------------------
-
-
-
-# -----------------------------------------------------
-# 2. FUNCIÓN PARA CARGAR AUTOMÁTICAMENTE EL EXCEL
-#    Se refresca sola cada 60 segundos (puedes cambiarlo)
-# -----------------------------------------------------
-url = "https://docs.google.com/spreadsheets/d/1uK0DYRCkaVBAqB2jUT0k50p1HC_EHDjd/export?format=xlsx"
-
-
-@st.cache_data(ttl=60)  # refresca cada 60 segundos
-def load_from_google_sheet():
-    try:
-        df = pd.read_excel(url, engine="openpyxl")
-        return clean_data(df)
-    except Exception as e:
-        st.error(f"Error al cargar desde Google Sheet: {e}")
-        return None
-
 # --- FUNCIÓN PARA CARGAR DATOS ---
-# --- FUNCIÓN DE LIMPIEZA DE DATOS (REUTILIZABLE) ---
-def clean_data(df):
+@st.cache_data
+def load_data(file):
     try:
+        # Detectar tipo de archivo y leer apropiadamente
+        if file.name.endswith('.xlsx') or file.name.endswith('.xls'):
+            df = pd.read_excel(file)
+        else:
+            df = pd.read_csv(file)
+        
         # Limpieza de nombres de columnas
         df.columns = df.columns.str.strip()
         
@@ -93,46 +72,8 @@ def clean_data(df):
         
         return df
     except Exception as e:
-        st.error(f"Error al procesar los datos: {e}")
+        st.error(f"Error al procesar el archivo: {e}")
         return None
-
-# --- FUNCIÓN PARA CARGAR DATOS (ARCHIVO LOCAL/UPLOAD) ---
-@st.cache_data
-def load_data(file_or_path):
-    try:
-        # Si es un string (ruta), leer desde ahí
-        if isinstance(file_or_path, str):
-            if file_or_path.endswith('.xlsx') or file_or_path.endswith('.xls'):
-                df = pd.read_excel(file_or_path)
-            else:
-                df = pd.read_csv(file_or_path)
-        # Si es un objeto archivo (UploadedFile)
-        else:
-            if file_or_path.name.endswith('.xlsx') or file_or_path.name.endswith('.xls'):
-                df = pd.read_excel(file_or_path)
-            else:
-                df = pd.read_csv(file_or_path)
-        
-        return clean_data(df)
-    except Exception as e:
-        st.error(f"Error al leer el archivo: {e}")
-        return None
-
-# --- GESTIÓN DE CONFIGURACIÓN (ONEDRIVE) ---
-import json
-import os
-
-CONFIG_FILE = 'config_onedrive.json'
-
-def load_config():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, 'r') as f:
-            return json.load(f)
-    return {}
-
-def save_config(path):
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump({'onedrive_path': path}, f)
 
 # --- INTERFAZ PRINCIPAL ---
 st.title("🎓 Dashboard de Gestión Académica")
@@ -141,47 +82,7 @@ st.markdown("---")
 # SIDEBAR
 with st.sidebar:
     st.header("📂 Configuración")
-    
-    # 1. Carga Manual
-    uploaded_file = st.file_uploader("Sube tu archivo CSV/Excel (Prioritario)", type=["csv", "xlsx"])
-    
-    st.markdown("---")
-    
-    # 2. Configuración Automática (OneDrive)
-    config = load_config()
-    saved_path = config.get('onedrive_path', '')
-    
-    with st.expander("⚙️ Configuración Ruta Automática (OneDrive)", expanded=not bool(saved_path)):
-        st.write("Configura una ruta local para cargar el archivo automáticamente al iniciar.")
-        input_path = st.text_input("Ruta absoluta del archivo:", value=saved_path)
-        if st.button("Guardar Ruta"):
-            if os.path.exists(input_path):
-                save_config(input_path)
-                st.success("¡Ruta guardada! Recarga la página.")
-                st.rerun()
-            else:
-                st.error("La ruta no existe. Verifica e intenta de nuevo.")
-    
-    # Lógica de Selección de Archivo
-    df = None
-    source_msg = ""
-    
-    if uploaded_file is not None:
-        df = load_data(uploaded_file)
-        source_msg = "📂 Archivo cargado manualmente."
-    else:
-        # Por defecto, intentar cargar desde Google Sheet
-        df = load_from_google_sheet()
-        if df is not None:
-            source_msg = "🌐 Datos cargados desde Google Sheet (En vivo)."
-        elif saved_path and os.path.exists(saved_path):
-            # Fallback a OneDrive si falla Google Sheet y existe config
-            df = load_data(saved_path)
-            source_msg = f"📂 Archivo cargado desde OneDrive: `{os.path.basename(saved_path)}`"
-    
-    if source_msg:
-        st.success(source_msg)
-
+    uploaded_file = st.file_uploader("Sube tu archivo CSV", type=["csv", "xlsx"])
     st.markdown("---")
     st.info("El sistema detecta automáticamente duplicidad de programas y genera cronogramas comparativos.")
     
@@ -195,7 +96,10 @@ with st.sidebar:
             else:
                 st.warning("Por favor escribe algo antes de enviar.")
 
-if df is not None:
+if uploaded_file is not None:
+    df = load_data(uploaded_file)
+    
+    if df is not None:
         # Crear 4 pestañas
         tab1, tab2, tab3, tab4 = st.tabs([
             "🔍 Agenda Individual", 
@@ -301,6 +205,7 @@ if df is not None:
                         barmode='group',
                         title="Comparativa de Intensidad Diaria por Coordinadora"
                     )
+                    fig_daily.update_xaxes(tickformat="%d-%m-%Y")
                     fig_daily.add_hline(y=2, line_dash="dot", annotation_text="Carga Normal")
                     st.plotly_chart(fig_daily, use_container_width=True)
                     
@@ -325,6 +230,10 @@ if df is not None:
                                     if col in detalle_critico.columns:
                                         columnas_disponibles.append(col)
                                 
+                                # Formatear fechas en detalle crítico
+                                if pd.api.types.is_datetime64_any_dtype(detalle_critico['DIAS/FECHAS']):
+                                    detalle_critico['DIAS/FECHAS'] = detalle_critico['DIAS/FECHAS'].dt.strftime('%d-%m-%Y')
+
                                 st.dataframe(
                                     detalle_critico[columnas_disponibles],
                                     hide_index=True,
@@ -340,6 +249,7 @@ if df is not None:
                         color='Cant_Programas',
                         color_continuous_scale=['#90EE90', '#FF4B4B'] # Verde a Rojo
                     )
+                    fig_daily.update_xaxes(tickformat="%d-%m-%Y")
                     fig_daily.add_hline(y=2, line_dash="dot", annotation_text="Carga Normal")
                     st.plotly_chart(fig_daily, use_container_width=True)
                     
@@ -374,6 +284,10 @@ if df is not None:
                                 if col in detalle_critico.columns:
                                     columnas_disponibles.append(col)
                             
+                            # Formatear fechas en detalle crítico
+                            if pd.api.types.is_datetime64_any_dtype(detalle_critico['DIAS/FECHAS']):
+                                detalle_critico['DIAS/FECHAS'] = detalle_critico['DIAS/FECHAS'].dt.strftime('%d-%m-%Y')
+
                             st.dataframe(
                                 detalle_critico[columnas_disponibles],
                                 hide_index=True,
@@ -433,7 +347,7 @@ if df is not None:
                     'Thursday': 'Jueves', 'Friday': 'Viernes', 'Saturday': 'Sábado', 'Sunday': 'Domingo'
                 }
                 resumen_dias['Dia_Semana'] = resumen_dias[fecha_col].dt.strftime('%A').map(dias_semana_esp).fillna(resumen_dias[fecha_col].dt.strftime('%A'))
-                resumen_dias['Fecha_Formato'] = resumen_dias[fecha_col].dt.strftime('%d/%m/%Y')
+                resumen_dias['Fecha_Formato'] = resumen_dias[fecha_col].dt.strftime('%d-%m-%Y')
                 # Ordenar por fecha (y coordinadora si es comparativa)
                 if es_comparativa:
                     resumen_dias = resumen_dias.sort_values(['Coordinadora', fecha_col])
@@ -511,6 +425,11 @@ if df is not None:
                                         if col in detalle_dia.columns:
                                             columnas_detalle.append(col)
                                     
+                                    # Formatear fechas
+                                    if pd.api.types.is_datetime64_any_dtype(detalle_dia['DIAS/FECHAS']):
+                                        detalle_dia = detalle_dia.copy()
+                                        detalle_dia['DIAS/FECHAS'] = detalle_dia['DIAS/FECHAS'].dt.strftime('%d-%m-%Y')
+
                                     st.dataframe(
                                         detalle_dia[columnas_detalle],
                                         hide_index=True,
@@ -583,6 +502,11 @@ if df is not None:
                                 if col in detalle_dia.columns:
                                     columnas_detalle.append(col)
                             
+                            # Formatear fechas
+                            if pd.api.types.is_datetime64_any_dtype(detalle_dia['DIAS/FECHAS']):
+                                detalle_dia = detalle_dia.copy()
+                                detalle_dia['DIAS/FECHAS'] = detalle_dia['DIAS/FECHAS'].dt.strftime('%d-%m-%Y')
+
                             st.dataframe(
                                 detalle_dia[columnas_detalle],
                                 hide_index=True,
@@ -602,8 +526,13 @@ if df is not None:
                 if col in df_coord.columns:
                     columnas_calendario.append(col)
             
+            # Formatear fecha para visualización en tabla
+            df_coord_display = df_coord.copy()
+            if pd.api.types.is_datetime64_any_dtype(df_coord_display['DIAS/FECHAS']):
+                df_coord_display['DIAS/FECHAS'] = df_coord_display['DIAS/FECHAS'].dt.strftime('%d-%m-%Y')
+
             st.dataframe(
-                df_coord[columnas_calendario],
+                df_coord_display[columnas_calendario],
                 hide_index=True,
                 use_container_width=True
             )
@@ -697,12 +626,22 @@ if df is not None:
 
             st.info("Resumen general de todas las coordinadoras y sus cargas de trabajo.")
             
-            # Resumen general
-            resumen_global = df.groupby('COORDINADORA RESPONSABLE').agg({
-                'PROGRAMA': 'nunique',
-                'DIAS/FECHAS': 'count'
-            }).reset_index()
-            resumen_global.columns = ['Coordinadora', 'Programas Únicos', 'Total Sesiones']
+            # Resumen general con desglose de Magíster y Diplomado
+            def calcular_resumen(sub_df):
+                programas = sub_df['PROGRAMA'].unique()
+                total_progs = len(programas)
+                # Contar Diplomados (contiene "diplomado" case-insensitive)
+                diplomados = sum(1 for p in programas if 'diplomado' in str(p).lower())
+                # El resto son Magísteres (según requerimiento de suma exacta)
+                magisteres = total_progs - diplomados
+                
+                return pd.Series({
+                    'Magísteres': magisteres,
+                    'Diplomados': diplomados,
+                    'Total Sesiones': len(sub_df)
+                })
+
+            resumen_global = df.groupby('COORDINADORA RESPONSABLE').apply(calcular_resumen).reset_index()
             
             st.dataframe(resumen_global, hide_index=True, use_container_width=True)
             
@@ -899,7 +838,7 @@ if df is not None:
             if not dias_choques.empty:
                 # Agregar información de fecha formateada
                 if pd.api.types.is_datetime64_any_dtype(dias_choques['Fecha']):
-                    dias_choques['Fecha_Formato'] = dias_choques['Fecha'].dt.strftime('%d/%m/%Y')
+                    dias_choques['Fecha_Formato'] = dias_choques['Fecha'].dt.strftime('%d-%m-%Y')
                     dias_choques['Dia_Semana'] = dias_choques['Fecha'].dt.strftime('%A')
                     # Mapear días al español
                     dias_semana_map = {
@@ -1168,7 +1107,7 @@ if df is not None:
                 try:
                     def get_fecha_str(val):
                         if pd.isna(val): return '-'
-                        return val.strftime('%d/%m/%Y')
+                        return val.strftime('%d-%m-%Y')
 
                     def get_horario_str(series):
                         try:
@@ -1268,4 +1207,4 @@ if df is not None:
 
 
 else:
-    st.error("❌ No se pudieron cargar datos. Por favor sube un archivo o verifica la conexión con Google Sheet.")
+    st.info("👆 Sube el archivo CSV para comenzar.")
