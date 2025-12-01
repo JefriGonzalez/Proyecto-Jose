@@ -2,7 +2,4 @@ streamlit
 pandas
 plotly
 openpyxl
-styles
-charts
-utils
-re
+requests
