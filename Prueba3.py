@@ -792,5 +792,5 @@ with tab_gestion:
     elif password:
         st.error("Contraseña incorrecta")
     else:
-        st.info("🔒 Esta sección está protegida. Ingrese la contraseña para continuar."
+        st.info("🔒 Esta sección está protegida. Ingrese la contraseña para continuar.")
 
