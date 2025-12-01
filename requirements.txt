@@ -5,3 +5,8 @@ openpyxl
 styles
 charts
 utils
+re
+io
+requests
+json
+os
