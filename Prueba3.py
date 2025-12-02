@@ -337,8 +337,33 @@ with tab2:
         
         with col_pie:
             dist_dia = df_t2.groupby(["COORDINADORA RESPONSABLE", "Dia_Semana"]).size().reset_index(name="Cant")
-            fig_p = px.bar(dist_dia, x="COORDINADORA RESPONSABLE", y="Cant", color="Dia_Semana", title="Distribución por Día Semana")
-            st.plotly_chart(charts.update_chart_layout(fig_p), use_container_width=True)
+            
+            # Configuración de gráfico agrupado
+            fig_p = px.bar(
+                dist_dia, 
+                x="COORDINADORA RESPONSABLE", 
+                y="Cant", 
+                color="Dia_Semana", 
+                barmode="group", # Barras agrupadas
+                title="Distribución por Día Semana (Comparativa)"
+            )
+            
+            # Cálculo de ancho dinámico para el scroll
+            n_coords = dist_dia["COORDINADORA RESPONSABLE"].nunique()
+            # Estimamos 150px por coordinadora (ajustable)
+            ancho_grafico = max(600, n_coords * 150) 
+            
+            fig_p.update_layout(width=ancho_grafico)
+
+            # Contenedor con scroll horizontal
+            st.markdown(f"""
+            <div style="overflow-x: auto; padding-bottom: 20px;">
+                <div style="width: {ancho_grafico}px;">
+            """, unsafe_allow_html=True)
+            
+            st.plotly_chart(charts.update_chart_layout(fig_p), use_container_width=False)
+            
+            st.markdown("</div></div>", unsafe_allow_html=True)
 
         # Resumen Tabla
         st.markdown("### Resumen de Actividad")
@@ -813,29 +838,4 @@ with tab_gestion:
                             suffixes=("_Actual", "_Simulado")
                         ).fillna(0)
                         
-                        comparativa["Diferencia"] = comparativa["Puntaje_Simulado"] - comparativa["Puntaje_Actual"]
-                        comparativa = comparativa.sort_values("Puntaje_Simulado", ascending=False)
-                        
-                        st.dataframe(
-                            comparativa,
-                            hide_index=True,
-                            use_container_width=True,
-                            column_config={
-                                "Puntaje_Actual": st.column_config.NumberColumn("Carga Actual", format="%.2f"),
-                                "Puntaje_Simulado": st.column_config.NumberColumn("Carga Simulada", format="%.2f"),
-                                "Diferencia": st.column_config.NumberColumn(
-                                    "Variación", 
-                                    format="%.2f",
-                                    help="Positivo: Aumenta carga | Negativo: Disminuye carga"
-                                )
-                            }
-                        )
-
-                else:
-                    st.info(f"No hay datos para el mes de {sel_mes_carga}.")
-        else:
-            st.info("Selecciona un año para ver la información.")
-    elif password:
-        st.error("Contraseña incorrecta")
-    else:
-        st.info("🔒 Esta sección está protegida. Ingrese la contraseña para continuar.")
+                        comparativa["Diferencia"] = comparativa["Puntaje_Simulado"] - co
