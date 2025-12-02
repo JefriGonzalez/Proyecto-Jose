@@ -5,8 +5,6 @@ from datetime import datetime
 import re
 import io
 import requests
-import json
-import os
 
 # -----------------------------------------------------------------------------
 # IMPORTAR MÓDULOS LOCALES
@@ -120,61 +118,12 @@ st.markdown("---")
 with st.sidebar:
     st.header("📂 Panel de Control")
     
-    # Detectar si existe configuración local para ponerlo por defecto
-    idx_defecto = 0
-    if os.path.exists("config_onedrive.json"):
-        idx_defecto = 2 # Local Configurado
-
-    modo_carga = st.radio(
-        "Origen de Datos", 
-        ["Subir archivo", "OneDrive", "Local Configurado"], 
-        index=idx_defecto,
-        horizontal=True
-    )
-
+    # Opción única: Subir archivo
+    uploaded_file = st.file_uploader("Sube Excel o CSV", type=["xlsx", "csv"])
+    
     df_base = pd.DataFrame()
-
-    if modo_carga == "Subir archivo":
-        uploaded_file = st.file_uploader("Sube Excel o CSV", type=["xlsx", "csv"])
-        if uploaded_file:
-            df_base = cargar_datos_optimizado(uploaded_file, es_url=False)
-            
-    elif modo_carga == "Local Configurado":
-        if st.button("Cargar Archivo Local"):
-            try:
-                with open("config_onedrive.json", "r") as f:
-                    config = json.load(f)
-                    local_path = config.get("onedrive_path", "")
-                
-                if os.path.exists(local_path):
-                    st.info(f"Cargando desde: {local_path}")
-                    # Para archivos locales, pasamos el path como string pero load_data espera un objeto file-like o path
-                    # Pandas read_excel acepta paths strings.
-                    # Pero utils.load_data espera un objeto con .name
-                    
-                    class LocalFile:
-                        def __init__(self, path):
-                            self.name = path
-                            self.path = path
-                        def __fspath__(self):
-                            return self.path
-                        # read_excel/csv pueden tomar el path directo
-                    
-                    # Modificamos load_data para aceptar paths o objetos
-                    # En utils.py: pd.read_excel(file) funciona con paths.
-                    # Pero file.name se usa.
-                    
-                    file_obj = LocalFile(local_path)
-                    df_base = utils.load_data(file_obj)
-                else:
-                    st.error(f"No se encontró el archivo en: {local_path}")
-            except Exception as e:
-                st.error(f"Error al cargar configuración local: {e}")
-
-    else:
-        onedrive_url = st.text_input("URL OneDrive:", placeholder="https://...")
-        if st.button("Cargar Nube") and onedrive_url:
-            df_base = cargar_datos_optimizado(onedrive_url, es_url=True)
+    if uploaded_file:
+        df_base = cargar_datos_optimizado(uploaded_file, es_url=False)
 
     st.markdown("---")
     
@@ -481,7 +430,7 @@ with tab3:
     if not choques.empty:
         choques["Fecha"] = choques["DIAS/FECHAS"].dt.strftime("%d-%m-%Y")
         fig_ch = px.scatter(choques, x="Fecha", y="N_Coords", size="N_Coords", color="N_Coords", 
-                            color_continuous_scale="Reds", title="Días con múltiples coordinadoras")
+                            color_continuous_scale="Reds", range_color=[0, 6], title="Días con múltiples coordinadoras")
         st.plotly_chart(charts.update_chart_layout(fig_ch), use_container_width=True)
     else:
         st.info("No se detectaron días con múltiples coordinadoras.")
@@ -663,9 +612,9 @@ with tab_gestion:
                 df_matrix["Mes_Num"] = df_matrix["DIAS/FECHAS"].dt.month
                 df_matrix["Mes"] = df_matrix["Mes_Num"].map(mapa_meses)
                 
-                # Pivotar: Index=Coord, Columns=Mes, Values=Count
+                # Pivotar: Index=Coord+Programa, Columns=Mes, Values=Count
                 matrix = df_matrix.pivot_table(
-                    index="COORDINADORA RESPONSABLE", 
+                    index=["COORDINADORA RESPONSABLE", "PROGRAMA"], 
                     columns="Mes", 
                     values="DIAS/FECHAS", 
                     aggfunc="count",
@@ -682,7 +631,7 @@ with tab_gestion:
                 
                 # Mostrar con gradiente (heatmap)
                 st.dataframe(
-                    matrix.style.background_gradient(cmap="RdYlGn_r", axis=None), # Rojo=Alto, Verde=Bajo
+                    matrix.style.background_gradient(cmap="RdYlGn_r", axis=None, vmin=0, vmax=20), # Rojo=Alto, Verde=Bajo
                     use_container_width=True
                 )
             else:
@@ -700,13 +649,16 @@ with tab_gestion:
             df_g["Mes_Nombre"] = df_g["DIAS/FECHAS"].dt.month.map(mapa_meses)
             # Ordenar meses disponibles por número de mes
             meses_disponibles_num = sorted(df_g["DIAS/FECHAS"].dt.month.unique())
-            meses_carga = [mapa_meses[m] for m in meses_disponibles_num]
+            meses_carga = ["Todos los meses"] + [mapa_meses[m] for m in meses_disponibles_num]
             
             sel_mes_carga = st.selectbox("Seleccionar Mes para Cálculo", meses_carga, key="tg_carga_mes")
 
             if sel_mes_carga:
-                # Filtrar por mes (usando el nombre mapeado)
-                df_carga = df_g[df_g["Mes_Nombre"] == sel_mes_carga].copy()
+                if sel_mes_carga == "Todos los meses":
+                    df_carga = df_g.copy()
+                else:
+                    # Filtrar por mes (usando el nombre mapeado)
+                    df_carga = df_g[df_g["Mes_Nombre"] == sel_mes_carga].copy()
                 
                 if not df_carga.empty:
                     # Buscar columna exacta o parecida
@@ -785,6 +737,100 @@ with tab_gestion:
                                 "Estado Alumnos": st.column_config.TextColumn("Estado", width="small")
                             }
                         )
+
+                    # =============================================================================
+                    # SIMULADOR DE BALANCEO DE CARGA
+                    # =============================================================================
+                    st.markdown("---")
+                    st.subheader("⚖️ Simulador de Balanceo de Carga")
+                    st.info("💡 Los cambios aquí son temporales (simulación) y no afectan el archivo original.")
+
+                    # Inicializar estado de simulación
+                    if "sim_cambios" not in st.session_state:
+                        st.session_state["sim_cambios"] = {} # {Programa: Nueva_Coord}
+
+                    # Interfaz de Reasignación
+                    col_sim1, col_sim2, col_sim3 = st.columns(3)
+                    
+                    # Lista de programas disponibles en el mes seleccionado
+                    progs_mes = sorted(df_carga["PROGRAMA"].unique())
+                    coords_disp = sorted(df_base["COORDINADORA RESPONSABLE"].unique())
+
+                    with col_sim1:
+                        prog_sel = st.selectbox("Seleccionar Programa a Reasignar", progs_mes, key="sim_prog")
+                    
+                    # Obtener coordinadora actual (considerando simulación previa)
+                    coord_actual_real = df_carga[df_carga["PROGRAMA"] == prog_sel]["COORDINADORA RESPONSABLE"].iloc[0]
+                    coord_actual_sim = st.session_state["sim_cambios"].get(prog_sel, coord_actual_real)
+                    
+                    with col_sim2:
+                        st.text_input("Coordinadora Actual (Simulada)", value=coord_actual_sim, disabled=True)
+                    
+                    with col_sim3:
+                        nueva_coord = st.selectbox("Asignar a Nueva Coordinadora", coords_disp, key="sim_new_coord")
+
+                    if st.button("🔄 Aplicar Cambio (Simulación)"):
+                        st.session_state["sim_cambios"][prog_sel] = nueva_coord
+                        st.success(f"Programa '{prog_sel}' reasignado a '{nueva_coord}' en la simulación.")
+                        st.rerun()
+
+                    # Botón Reset
+                    if st.session_state["sim_cambios"]:
+                        if st.button("🗑️ Borrar Simulación"):
+                            st.session_state["sim_cambios"] = {}
+                            st.rerun()
+
+                    # --- CÁLCULO SIMULADO ---
+                    if st.session_state["sim_cambios"]:
+                        # Crear copia para simulación
+                        df_sim = df_carga.copy()
+                        
+                        # Aplicar cambios
+                        for p, c in st.session_state["sim_cambios"].items():
+                            df_sim.loc[df_sim["PROGRAMA"] == p, "COORDINADORA RESPONSABLE"] = c
+                        
+                        # Recalcular métricas simuladas
+                        sim_prog = df_sim.groupby(["COORDINADORA RESPONSABLE", "PROGRAMA"]).agg(
+                            Sesiones=("DIAS/FECHAS", "count"),
+                            Alumnos=(col_alumnos, "max")
+                        ).reset_index()
+                        
+                        sim_prog["Factor_Sesiones"] = sim_prog["Sesiones"] / 4
+                        sim_prog["Factor_Alumnos"] = sim_prog["Alumnos"].apply(get_factor_alumnos)
+                        sim_prog["Puntaje"] = sim_prog["Factor_Sesiones"] * sim_prog["Factor_Alumnos"]
+                        
+                        resumen_sim = sim_prog.groupby("COORDINADORA RESPONSABLE")["Puntaje"].sum().reset_index()
+                        
+                        # Comparativa
+                        st.markdown("#### 📊 Impacto de la Simulación")
+                        
+                        # Merge Real vs Simulado
+                        comparativa = pd.merge(
+                            resumen_carga[["COORDINADORA RESPONSABLE", "Puntaje"]],
+                            resumen_sim[["COORDINADORA RESPONSABLE", "Puntaje"]],
+                            on="COORDINADORA RESPONSABLE",
+                            how="outer",
+                            suffixes=("_Actual", "_Simulado")
+                        ).fillna(0)
+                        
+                        comparativa["Diferencia"] = comparativa["Puntaje_Simulado"] - comparativa["Puntaje_Actual"]
+                        comparativa = comparativa.sort_values("Puntaje_Simulado", ascending=False)
+                        
+                        st.dataframe(
+                            comparativa,
+                            hide_index=True,
+                            use_container_width=True,
+                            column_config={
+                                "Puntaje_Actual": st.column_config.NumberColumn("Carga Actual", format="%.2f"),
+                                "Puntaje_Simulado": st.column_config.NumberColumn("Carga Simulada", format="%.2f"),
+                                "Diferencia": st.column_config.NumberColumn(
+                                    "Variación", 
+                                    format="%.2f",
+                                    help="Positivo: Aumenta carga | Negativo: Disminuye carga"
+                                )
+                            }
+                        )
+
                 else:
                     st.info(f"No hay datos para el mes de {sel_mes_carga}.")
         else:
@@ -793,4 +839,3 @@ with tab_gestion:
         st.error("Contraseña incorrecta")
     else:
         st.info("🔒 Esta sección está protegida. Ingrese la contraseña para continuar.")
-
