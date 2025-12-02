@@ -2,7 +2,9 @@ import streamlit as st
 import pandas as pd
 import io
 from datetime import datetime
- 
+from openpyxl import Workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
+from io import BytesIO
 # --- CARGA DE DATOS ---
 @st.cache_data
 def load_data(file):
@@ -125,12 +127,19 @@ def render_filters(df, prefix="t1"):
  
 # --- EXPORTAR ---
 def generate_excel_report(df):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Datos_Completos')
-        
-        # Resumen por coord
-        resumen = df.groupby('COORDINADORA RESPONSABLE').size().reset_index(name='Total Clases')
-        resumen.to_excel(writer, index=False, sheet_name='Resumen_Coordinadoras')
-        
-    return output.getvalue()
+    output = BytesIO()
+
+    # Crear workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Reporte"
+
+    # Insertar el DataFrame fila por fila
+    for row in dataframe_to_rows(df, index=False, header=True):
+        ws.append(row)
+
+    # Guardar dentro del buffer
+    wb.save(output)
+    output.seek(0)
+
+    return output
