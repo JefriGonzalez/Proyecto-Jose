@@ -158,13 +158,14 @@ if "DIAS/FECHAS" not in df_base.columns:
 # -----------------------------------------------------------------------------
 # TABS PRINCIPALES
 # -----------------------------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5, tab_gestion = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab_gestion, tab_validaciones = st.tabs([
     "👩‍💼 Coordinadoras", 
     "📊 Comparativa", 
     "🌐 Global", 
     "🧾 Resumen Programas", 
     "🏫 Calidad & Sede",
-    "🔒 Gestión"
+    "🔒 Gestión",
+    "🕵️ Validaciones"
 ])
 
 # =============================================================================
@@ -174,52 +175,71 @@ with tab1:
     st.markdown("## 🔎 Gestión Detallada por Coordinadora")
     
     # --- LÓGICA DE CASCADA ---
-    # Paso 1: Año
-    c1, c2, c3 = st.columns(3)
+    # Paso 1: Año y Mes
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         years_disp = sorted(df_base["DIAS/FECHAS"].dt.year.unique())
         sel_year = st.multiselect("1. Año", years_disp, key="t1_year", placeholder="Todos")
         # Filtro
         df_1 = df_base[df_base["DIAS/FECHAS"].dt.year.isin(sel_year)] if sel_year else df_base
 
-    # Paso 2: Sede (Opciones dependen de Año)
     with c2:
-        sedes_disp = sorted(df_1["SEDE"].unique())
-        sel_sede = st.multiselect("2. Sede", sedes_disp, key="t1_sede", placeholder="Todas")
-        # Filtro
-        df_2 = df_1[df_1["SEDE"].isin(sel_sede)] if sel_sede else df_1
+        # Filtro Mes (Nuevo)
+        if "Mes" in df_1.columns:
+            meses_disp = sorted(df_1["Mes"].unique(), key=lambda x: list(utils.MESES_NOMBRE.values()).index(x) if x in utils.MESES_NOMBRE.values() else 99)
+            sel_mes = st.multiselect("2. Mes", meses_disp, key="t1_mes", placeholder="Todos")
+            df_2 = df_1[df_1["Mes"].isin(sel_mes)] if sel_mes else df_1
+        else:
+            df_2 = df_1
 
-    # Paso 3: Modalidad (Opciones dependen de Año + Sede)
+    # Paso 2: Sede
     with c3:
-        mods_disp = sorted(df_2["Modalidad_Calc"].unique())
-        sel_mod = st.multiselect("3. Modalidad", mods_disp, key="t1_mod", placeholder="Todas")
+        sedes_disp = sorted(df_2["SEDE"].unique())
+        sel_sede = st.multiselect("3. Sede", sedes_disp, key="t1_sede", placeholder="Todas")
         # Filtro
-        df_3 = df_2[df_2["Modalidad_Calc"].isin(sel_mod)] if sel_mod else df_2
+        df_3 = df_2[df_2["SEDE"].isin(sel_sede)] if sel_sede else df_2
+
+    # Paso 3: Modalidad
+    with c4:
+        mods_disp = sorted(df_3["Modalidad_Calc"].unique())
+        sel_mod = st.multiselect("4. Modalidad", mods_disp, key="t1_mod", placeholder="Todas")
+        # Filtro
+        df_4 = df_3[df_3["Modalidad_Calc"].isin(sel_mod)] if sel_mod else df_3
 
     # Segunda fila de filtros
-    c4, c5, c6 = st.columns(3)
+    c5, c6, c7, c8 = st.columns(4)
     
-    # Paso 4: Coordinadora (Depende de anteriores)
-    with c4:
-        coords_disp = sorted(df_3["COORDINADORA RESPONSABLE"].unique())
-        sel_coord = st.multiselect("4. Coordinadora", coords_disp, key="t1_coord", placeholder="Todas")
-        # Filtro
-        df_4 = df_3[df_3["COORDINADORA RESPONSABLE"].isin(sel_coord)] if sel_coord else df_3
-
-    # Paso 5: Programa (Depende de anteriores)
+    # Paso 4: Coordinadora
     with c5:
-        progs_disp = sorted(df_4["PROGRAMA"].unique())
-        sel_prog = st.multiselect("5. Programa", progs_disp, key="t1_prog", placeholder="Todos")
+        coords_disp = sorted(df_4["COORDINADORA RESPONSABLE"].unique())
+        sel_coord = st.multiselect("5. Coordinadora", coords_disp, key="t1_coord", placeholder="Todas")
         # Filtro
-        df_5 = df_4[df_4["PROGRAMA"].isin(sel_prog)] if sel_prog else df_4
+        df_5 = df_4[df_4["COORDINADORA RESPONSABLE"].isin(sel_coord)] if sel_coord else df_4
 
-    # Paso 6: Día Semana
+    # Paso 5: Programa
     with c6:
+        progs_disp = sorted(df_5["PROGRAMA"].unique())
+        sel_prog = st.multiselect("6. Programa", progs_disp, key="t1_prog", placeholder="Todos")
+        # Filtro
+        df_6 = df_5[df_5["PROGRAMA"].isin(sel_prog)] if sel_prog else df_5
+
+    # Paso 6: Profesor (Nuevo)
+    with c7:
+        if "PROFESOR" in df_6.columns:
+            # Asegurar que sean strings y eliminar nulos para evitar error de ordenamiento
+            profs_disp = sorted(df_6["PROFESOR"].dropna().astype(str).unique())
+            sel_prof = st.multiselect("7. Profesor", profs_disp, key="t1_prof", placeholder="Todos")
+            df_7 = df_6[df_6["PROFESOR"].isin(sel_prof)] if sel_prof else df_6
+        else:
+            df_7 = df_6
+
+    # Paso 7: Día Semana
+    with c8:
         dias_orden = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-        dias_disp = sorted(df_5["Dia_Semana"].unique(), key=lambda x: dias_orden.index(x) if x in dias_orden else 99)
-        sel_dia = st.multiselect("6. Día Semana", dias_disp, key="t1_dia", placeholder="Todos")
+        dias_disp = sorted(df_7["Dia_Semana"].unique(), key=lambda x: dias_orden.index(x) if x in dias_orden else 99)
+        sel_dia = st.multiselect("8. Día Semana", dias_disp, key="t1_dia", placeholder="Todos")
         # Filtro Final
-        df_final_t1 = df_5[df_5["Dia_Semana"].isin(sel_dia)] if sel_dia else df_5
+        df_final_t1 = df_7[df_7["Dia_Semana"].isin(sel_dia)] if sel_dia else df_7
 
     st.markdown("---")
 
@@ -637,6 +657,24 @@ with tab_gestion:
                 df_matrix["Mes_Num"] = df_matrix["DIAS/FECHAS"].dt.month
                 df_matrix["Mes"] = df_matrix["Mes_Num"].map(mapa_meses)
                 
+                # Compactar nombres de programas
+                def compactar_nombre(nombre):
+                    n = str(nombre).upper()
+                    reemplazos = {
+                        "MAGISTER": "MAG.", "DIPLOMADO": "DIPL.", "DIRECCION": "DIR.",
+                        "GESTION": "GEST.", "NEGOCIOS": "NEG.", "PRESENCIAL": "PRES.",
+                        "CORPORATIVO": "CORP.", "ORGANIZACIONES": "ORG.", "MARKETING": "MKT.",
+                        "MANAGEMENT": "MGMT.", "SOSTENIBLES": "SOST.", "INNOVACION": "INNOV."
+                    }
+                    for k, v in reemplazos.items():
+                        n = n.replace(k, v)
+                    # Truncar si es muy largo
+                    if len(n) > 40:
+                        n = n[:37] + "..."
+                    return n
+
+                df_matrix["PROGRAMA"] = df_matrix["PROGRAMA"].apply(compactar_nombre)
+
                 # Pivotar: Index=Coord+Programa, Columns=Mes, Values=Count
                 matrix = df_matrix.pivot_table(
                     index=["COORDINADORA RESPONSABLE", "PROGRAMA"], 
@@ -838,4 +876,92 @@ with tab_gestion:
                             suffixes=("_Actual", "_Simulado")
                         ).fillna(0)
                         
-                        comparativa["Diferencia"] = comparativa["Puntaje_Simulado"] - co
+                        comparativa["Diferencia"] = comparativa["Puntaje_Simulado"] - comparativa["Puntaje_Actual"]
+                        comparativa = comparativa.sort_values("Puntaje_Simulado", ascending=False)
+                        
+                        st.dataframe(
+                            comparativa,
+                            hide_index=True,
+                            use_container_width=True,
+                            column_config={
+                                "Puntaje_Actual": st.column_config.NumberColumn("Carga Actual", format="%.2f"),
+                                "Puntaje_Simulado": st.column_config.NumberColumn("Carga Simulada", format="%.2f"),
+                                "Diferencia": st.column_config.NumberColumn(
+                                    "Variación", 
+                                    format="%.2f",
+                                    help="Positivo: Aumenta carga | Negativo: Disminuye carga"
+                                )
+                            }
+                        )
+
+                else:
+                    st.info(f"No hay datos para el mes de {sel_mes_carga}.")
+        else:
+            st.info("Selecciona un año para ver la información.")
+    elif password:
+        st.error("Contraseña incorrecta")
+    else:
+        st.info("🔒 Esta sección está protegida. Ingrese la contraseña para continuar.")
+
+# =============================================================================
+# TAB 7: VALIDACIONES (CHOQUES DE HORARIO)
+# =============================================================================
+with tab_validaciones:
+    st.markdown("## 🕵️ Detección de Conflictos de Horario")
+    st.write("Esta sección busca automáticamente si un mismo **Profesor** tiene dos clases asignadas al mismo tiempo.")
+    
+    # Verificar si tenemos datos de horas
+    cols_horas = ["HORA_INICIO", "HORA_FIN"]
+    if not all(c in df_base.columns for c in cols_horas):
+        st.warning("⚠️ No se detectaron columnas de hora ('HORA INICIO', 'HORA FIN') en el archivo. No es posible validar choques.")
+    else:
+        # Preparar datos
+        df_val = df_base.dropna(subset=["HORA_INICIO", "HORA_FIN", "PROFESOR"]).copy()
+        
+        # Crear datetimes completos para comparar
+        try:
+            # Función auxiliar para combinar fecha y hora
+            def combine_dt(row, col_hora):
+                t = row[col_hora]
+                if pd.isna(t): return pd.NaT
+                # Si es string, intentar parsear
+                if isinstance(t, str):
+                    try: t = datetime.strptime(t, "%H:%M:%S").time()
+                    except: 
+                        try: t = datetime.strptime(t, "%H:%M").time()
+                        except: return pd.NaT
+                return datetime.combine(row["DIAS/FECHAS"].date(), t)
+
+            df_val["start_dt"] = df_val.apply(lambda x: combine_dt(x, "HORA_INICIO"), axis=1)
+            df_val["end_dt"] = df_val.apply(lambda x: combine_dt(x, "HORA_FIN"), axis=1)
+            
+            df_val = df_val.dropna(subset=["start_dt", "end_dt"])
+            
+            choques = []
+            
+            # Agrupar por Profesor y buscar solapamientos
+            for prof, sub in df_val.groupby("PROFESOR"):
+                if prof == "SIN PROFESOR" or prof == "POR DEFINIR": continue
+                
+                sub = sub.sort_values("start_dt")
+                # Iterar
+                for i in range(len(sub) - 1):
+                    curr = sub.iloc[i]
+                    next_row = sub.iloc[i+1]
+                    
+                    # Chequear overlap: Start_Next < End_Curr
+                    if next_row["start_dt"] < curr["end_dt"]:
+                        choques.append({
+                            "Profesor": prof,
+                            "Fecha": curr["DIAS/FECHAS"].strftime("%d-%m-%Y"),
+                            "Conflicto": f"{curr['PROGRAMA']} ({curr['HORA_INICIO']} - {curr['HORA_FIN']}) vs {next_row['PROGRAMA']} ({next_row['HORA_INICIO']} - {next_row['HORA_FIN']})"
+                        })
+            
+            if choques:
+                st.error(f"⚠️ Se encontraron {len(choques)} conflictos de horario.")
+                st.dataframe(pd.DataFrame(choques), use_container_width=True)
+            else:
+                st.success("✅ No se detectaron choques de horario para los profesores asignados.")
+                
+        except Exception as e:
+            st.error(f"Error al procesar las fechas/horas para validación: {e}"
