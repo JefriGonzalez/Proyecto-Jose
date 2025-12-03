@@ -964,4 +964,4 @@ with tab_validaciones:
                 st.success("✅ No se detectaron choques de horario para los profesores asignados.")
                 
         except Exception as e:
-            st.error(f"Error al procesar las fechas/horas para validación: {e}"
+            st.error(f"Error al procesar las fechas/horas para validación: {e}")
