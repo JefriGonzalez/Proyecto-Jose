@@ -1,35 +1,18 @@
-import os
-import sys
-from streamlit.web import cli as stcli
-
-# Ensure the current directory is in sys.path so local modules like utils can be imported
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.append(current_dir)
-
-# Auto-run block removed to prevent conflicts
-# if __name__ == "__main__":
-#     if not os.environ.get("STREAMLIT_RUNNING_IN_SUBPROCESS"):
-#         os.environ["STREAMLIT_RUNNING_IN_SUBPROCESS"] = "true"
-#         sys.argv = ["streamlit", "run", sys.argv[0], "--server.port", "8501"]
-#         sys.exit(stcli.main())
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 from datetime import datetime
-import requests
-import requests
+import re
 import io
-import hashlib
+import requests
 
 # -----------------------------------------------------------------------------
 # IMPORTAR MÓDULOS LOCALES
 # -----------------------------------------------------------------------------
+# Asegúrate de que existan styles.py, charts.py y utils.py en tu carpeta
+import styles
 import charts
 import utils
-import styles
 
 # -----------------------------------------------------------------------------
 # CONFIGURACIÓN DE PÁGINA
@@ -52,14 +35,15 @@ class FileLike(io.BytesIO):
         self.name = name
 
 @st.cache_data(ttl=3600)
-def cargar_datos_optimizado(file_hash, file_name, _file_content, es_url=False):
+def cargar_datos_optimizado(file_or_url, es_url=False):
     """
     Carga y procesa el archivo. Usa caché para no recargar en cada interacción.
-    Recibe hash para la key del caché, y _file_content (excluido del hash) para procesar.
     """
     try:
+        archivo_final = file_or_url
+        
         if es_url:
-            url = _file_content.strip() # En este caso file_content es la URL
+            url = file_or_url.strip()
             # Forzar descarga en OneDrive
             if ("onedrive.live.com" in url or "1drv.ms" in url) and "download=1" not in url:
                 sep = "&" if "?" in url else "?"
@@ -73,9 +57,6 @@ def cargar_datos_optimizado(file_hash, file_name, _file_content, es_url=False):
             if ".csv" in url.lower(): nombre = "data_onedrive.csv"
             
             archivo_final = FileLike(resp.content, nombre)
-        else:
-            # Reconstruir FileLike desde bytes
-            archivo_final = FileLike(_file_content, file_name)
 
         # Usamos la función load_data de tu utils.py
         df = utils.load_data(archivo_final)
@@ -85,8 +66,6 @@ def cargar_datos_optimizado(file_hash, file_name, _file_content, es_url=False):
 
     except Exception as e:
         st.error(f"Error crítico al cargar datos: {e}")
-        import traceback
-        st.code(traceback.format_exc())
         return pd.DataFrame()
 
 # Funciones de cálculo rápido para los Tabs
@@ -139,53 +118,12 @@ st.markdown("---")
 with st.sidebar:
     st.header("📂 Panel de Control")
     
-    # Opción: Subir archivo o Link
+    # Opción única: Subir archivo
     uploaded_file = st.file_uploader("Sube Excel o CSV", type=["xlsx", "csv"])
-    onedrive_url = st.text_input("O pega un Link de OneDrive / SharePoint")
     
     df_base = pd.DataFrame()
-    
-    # Prioridad: Archivo subido > Link
     if uploaded_file:
-        # Leer en memoria
-        bytes_data = uploaded_file.getvalue()
-        
-        # Calcular hash MD5 rápido para usar como key de caché
-        # Esto evita que Streamlit tenga que hashear todo el archivo grande en cada rerun
-        file_hash = hashlib.md5(bytes_data).hexdigest()
-        
-        # Pasamos hash, nombre y el contenido (con _ para que st.cache_data lo ignore si se configurara así, 
-        # pero aquí lo importante es que el hash cambia si el archivo cambia)
-        df_base = cargar_datos_optimizado(file_hash, uploaded_file.name, bytes_data, es_url=False)
-            
-    elif onedrive_url:
-        try:
-            # Transformar link de OneDrive para descarga directa si es necesario
-            url = onedrive_url
-            if "sharepoint.com" in url or "onedrive.live.com" in url:
-                # Intentar forzar descarga
-                if "?" in url:
-                    url = url.split("?")[0] + "?download=1"
-                else:
-                    url = url + "?download=1"
-            
-            with st.spinner("Descargando archivo..."):
-                resp = requests.get(url)
-                resp.raise_for_status()
-                
-                # Crear objeto tipo archivo en memoria
-                nombre = "archivo_onedrive.xlsx" # Asumimos xlsx por defecto
-                if "csv" in url.lower(): nombre = "archivo.csv"
-                
-                file_obj = io.BytesIO(resp.content)
-                file_obj.name = nombre
-                
-                df_base = utils.load_data(file_obj)
-                
-        except Exception as e:
-            st.error(f"Error al descargar desde el link: {e}")
-
-    st.markdown("---")
+        df_base = cargar_datos_optimizado(uploaded_file, es_url=False)
 
     st.markdown("---")
     
@@ -210,14 +148,12 @@ with st.sidebar:
 if df_base.empty:
     st.info("👋 Para comenzar, por favor carga tu archivo de planificación.")
     st.stop()
-    sys.exit()
 
 # Validación extra de columnas antes de continuar
 if "DIAS/FECHAS" not in df_base.columns:
     st.error("❌ Error: El archivo cargado no contiene la columna 'DIAS/FECHAS'. Por favor verifica el formato.")
     st.write("Columnas detectadas:", df_base.columns.tolist())
     st.stop()
-    sys.exit()
 
 # -----------------------------------------------------------------------------
 # TABS PRINCIPALES
@@ -849,19 +785,11 @@ with tab_gestion:
                         
                     # Detalle Desplegable
                     with st.expander("Ver Detalle por Programa"):
-                        # Filtro por Coordinadora
-                        coords_detalle = sorted(carga_prog["COORDINADORA RESPONSABLE"].unique())
-                        sel_coord_det = st.multiselect("Filtrar por Coordinadora", coords_detalle, key="filter_coord_detail")
-                        
-                        df_show_prog = carga_prog.copy()
-                        if sel_coord_det:
-                            df_show_prog = df_show_prog[df_show_prog["COORDINADORA RESPONSABLE"].isin(sel_coord_det)]
-
                         # Marcar visualmente si alumnos es 0
-                        df_show_prog["Estado Alumnos"] = df_show_prog["Alumnos"].apply(lambda x: "Por definir" if x == 0 else "Ok")
+                        carga_prog["Estado Alumnos"] = carga_prog["Alumnos"].apply(lambda x: "Por definir" if x == 0 else "Ok")
                         
                         st.dataframe(
-                            df_show_prog,
+                            carga_prog,
                             hide_index=True,
                             use_container_width=True,
                             column_config={
@@ -968,142 +896,6 @@ with tab_gestion:
 
                 else:
                     st.info(f"No hay datos para el mes de {sel_mes_carga}.")
-            
-            # =============================================================================
-            # DISTRIBUCIÓN SEMANAL (GRÁFICO DE ARAÑA)
-            # =============================================================================
-            st.markdown("---")
-            st.subheader("🕸️ Distribución Semanal de Carga")
-            st.caption("Visualiza qué días de la semana concentran más clases según los filtros seleccionados.")
-
-            # Filtros específicos para el gráfico de araña
-            c_rad1, c_rad2, c_rad3, c_rad4 = st.columns(4)
-            
-            # 1. Coordinadora
-            coords_rad = sorted(df_g["COORDINADORA RESPONSABLE"].unique())
-            sel_coord_rad = c_rad1.multiselect("Coordinadora", coords_rad, key="rad_coord", placeholder="Todas")
-            
-            # Filtrar df base para siguientes opciones
-            df_rad = df_g.copy()
-            if sel_coord_rad:
-                df_rad = df_rad[df_rad["COORDINADORA RESPONSABLE"].isin(sel_coord_rad)]
-            
-            # 2. Mes (Usamos el mapeo existente)
-            df_rad["Mes_Nombre"] = df_rad["DIAS/FECHAS"].dt.month.map(mapa_meses)
-            meses_rad = sorted(df_rad["Mes_Nombre"].unique(), key=lambda x: list(mapa_meses.values()).index(x) if x in mapa_meses.values() else 99)
-            sel_mes_rad = c_rad2.multiselect("Mes", meses_rad, key="rad_mes", placeholder="Todos")
-            
-            if sel_mes_rad:
-                df_rad = df_rad[df_rad["Mes_Nombre"].isin(sel_mes_rad)]
-                
-            # 3. Sede
-            sedes_rad = sorted(df_rad["SEDE"].unique())
-            sel_sede_rad = c_rad3.multiselect("Sede", sedes_rad, key="rad_sede", placeholder="Todas")
-            
-            if sel_sede_rad:
-                df_rad = df_rad[df_rad["SEDE"].isin(sel_sede_rad)]
-                
-            # 4. Programa
-            progs_rad = sorted(df_rad["PROGRAMA"].unique())
-            sel_prog_rad = c_rad4.multiselect("Programa", progs_rad, key="rad_prog", placeholder="Todos")
-            
-            if sel_prog_rad:
-                df_rad = df_rad[df_rad["PROGRAMA"].isin(sel_prog_rad)]
-            
-            if df_rad.empty:
-                st.warning("No hay datos con los filtros seleccionados.")
-            else:
-                # Layout de 3 columnas para gráficos
-                col_r1, col_r2, col_r3 = st.columns(3)
-                
-                # Estilo común para los gráficos de araña
-                radar_style = dict(
-                    line_close=True,
-                    color_discrete_sequence=["#FF4B4B"], # Color rojo intenso
-                    markers=True,
-                )
-
-                # 1. Gráfico Día
-                with col_r1:
-                    dias_orden = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-                    conteo_dias = df_rad["Dia_Semana"].value_counts().reindex(dias_orden, fill_value=0).reset_index()
-                    conteo_dias.columns = ["Dia", "Clases"]
-                    
-                    fig_rad = px.line_polar(
-                        conteo_dias, r='Clases', theta='Dia', 
-                        title="<b>Por Día Semana</b>", 
-                        **radar_style
-                    )
-                    fig_rad.update_traces(fill='toself', opacity=0.4, line=dict(width=3))
-                    st.plotly_chart(charts.update_chart_layout(fig_rad), use_container_width=True)
-
-                # 2. Gráfico Sede
-                with col_r2:
-                    conteo_sede = df_rad["SEDE"].value_counts().reset_index()
-                    conteo_sede.columns = ["Sede", "Clases"]
-                    
-                    fig_sede = px.line_polar(
-                        conteo_sede, r='Clases', theta='Sede', 
-                        title="<b>Por Sede</b>", 
-                        **radar_style
-                    )
-                    fig_sede.update_traces(fill='toself', opacity=0.4, line=dict(width=3))
-                    st.plotly_chart(charts.update_chart_layout(fig_sede), use_container_width=True)
-
-                # 3. Gráfico Modalidad
-                with col_r3:
-                    conteo_mod = df_rad["Modalidad_Calc"].value_counts().reset_index()
-                    conteo_mod.columns = ["Modalidad", "Clases"]
-                    
-                    fig_mod = px.line_polar(
-                        conteo_mod, r='Clases', theta='Modalidad', 
-                        title="<b>Por Modalidad</b>", 
-                        **radar_style
-                    )
-                    fig_mod.update_traces(fill='toself', opacity=0.4, line=dict(width=3))
-                    st.plotly_chart(charts.update_chart_layout(fig_mod), use_container_width=True)
-
-                # Detalle Dinámico por Día
-                st.markdown("##### 📅 Detalle por Día Semana")
-                
-                # Calcular día con más carga para ponerlo por defecto
-                if not df_rad.empty:
-                    dias_counts = df_rad["Dia_Semana"].value_counts()
-                    dia_max_carga = dias_counts.idxmax()
-                    
-                    # Ordenar días para el selector
-                    dias_orden = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-                    dias_disponibles = sorted(df_rad["Dia_Semana"].unique(), key=lambda x: dias_orden.index(x) if x in dias_orden else 99)
-                    
-                    # Selector de día
-                    idx_def = dias_disponibles.index(dia_max_carga) if dia_max_carga in dias_disponibles else 0
-                    sel_dia_det = st.selectbox("Seleccionar Día para ver detalle:", dias_disponibles, index=idx_def, key="sel_dia_detalle_rad")
-                    
-                    # Filtrar y mostrar
-                    df_dia_det = df_rad[df_rad["Dia_Semana"] == sel_dia_det].copy()
-                    coords_dia = sorted(df_dia_det["COORDINADORA RESPONSABLE"].unique())
-                    
-                    if not df_dia_det.empty:
-                        st.success(f"**Coordinadoras con turno en {sel_dia_det}:** {', '.join(coords_dia)}")
-                        
-                        # Ordenar por fecha
-                        df_dia_det = df_dia_det.sort_values("DIAS/FECHAS")
-                        df_dia_det["Fecha"] = df_dia_det["DIAS/FECHAS"].dt.strftime("%d-%m-%Y")
-                        
-                        st.dataframe(
-                            df_dia_det[["Fecha", "COORDINADORA RESPONSABLE", "PROGRAMA", "SEDE"]],
-                            hide_index=True,
-                            use_container_width=True,
-                            column_config={
-                                "COORDINADORA RESPONSABLE": "Coordinadora",
-                                "PROGRAMA": "Programa",
-                                "SEDE": "Sede"
-                            }
-                        )
-                    else:
-                        st.info(f"No hay clases para {sel_dia_det} con los filtros actuales.")
-                else:
-                    st.info("No hay datos para mostrar detalle.")
         else:
             st.info("Selecciona un año para ver la información.")
     elif password:
@@ -1138,15 +930,7 @@ with tab_validaciones:
                     except: 
                         try: t = datetime.strptime(t, "%H:%M").time()
                         except: return pd.NaT
-                
-                # Validación extra para fecha
-                fecha = row["DIAS/FECHAS"]
-                if pd.isna(fecha): return pd.NaT
-                
-                try:
-                    return datetime.combine(fecha.date(), t)
-                except:
-                    return pd.NaT
+                return datetime.combine(row["DIAS/FECHAS"].date(), t)
 
             df_val["start_dt"] = df_val.apply(lambda x: combine_dt(x, "HORA_INICIO"), axis=1)
             df_val["end_dt"] = df_val.apply(lambda x: combine_dt(x, "HORA_FIN"), axis=1)
@@ -1181,38 +965,3 @@ with tab_validaciones:
                 
         except Exception as e:
             st.error(f"Error al procesar las fechas/horas para validación: {e}")
-
-    # =============================================================================
-    # VALIDACIÓN: COORDINADORAS EN MÚLTIPLES SEDES
-    # =============================================================================
-    st.markdown("---")
-    st.subheader("🌍 Coordinadoras en Múltiples Sedes")
-    st.caption("Detecta coordinadoras que tienen asignadas clases en más de una sede distinta.")
-
-    if "SEDE" in df_base.columns and "COORDINADORA RESPONSABLE" in df_base.columns:
-        # Agrupar por coordinadora y contar sedes únicas
-        multi_sede = df_base.groupby("COORDINADORA RESPONSABLE")["SEDE"].unique().reset_index()
-        multi_sede["Cantidad_Sedes"] = multi_sede["SEDE"].apply(len)
-        multi_sede["Sedes"] = multi_sede["SEDE"].apply(lambda x: ", ".join(sorted(x)))
-        
-        # Filtrar las que tienen > 1 sede
-        multi_sede_filt = multi_sede[multi_sede["Cantidad_Sedes"] > 1].sort_values("Cantidad_Sedes", ascending=False)
-        
-        if not multi_sede_filt.empty:
-            st.warning(f"⚠️ Se encontraron {len(multi_sede_filt)} coordinadoras gestionando múltiples sedes.")
-            st.dataframe(
-                multi_sede_filt[["COORDINADORA RESPONSABLE", "Cantidad_Sedes", "Sedes"]],
-                hide_index=True,
-                use_container_width=True,
-                column_config={
-                    "COORDINADORA RESPONSABLE": "Coordinadora",
-                    "Cantidad_Sedes": st.column_config.NumberColumn("Nº Sedes"),
-                    "Sedes": "Sedes Asignadas"
-                }
-            )
-        else:
-            st.success("✅ Cada coordinadora está asignada a una única sede.")
-    else:
-        st.info("No se encontró información de Sede o Coordinadora para realizar esta validación.")
-
-# (Auto-run block removed
