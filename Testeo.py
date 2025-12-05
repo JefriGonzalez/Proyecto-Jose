@@ -226,7 +226,7 @@ with tab1:
     st.markdown("## 🔎 Gestión Detallada por Coordinadora")
     
     # --- LÓGICA DE CASCADA ---
-    st.markdown(styles.card_start(), unsafe_allow_html=True)
+   
     st.markdown("### 🔍 Filtros")
     # Paso 1: Año y Mes
     c1, c2, c3, c4 = st.columns(4)
@@ -251,7 +251,7 @@ with tab1:
         sel_prog = st.multiselect("4. Programa", progs_disp, key="t1_prog", placeholder="Todos")
         df_4 = df_3[df_3["PROGRAMA"].isin(sel_prog)] if sel_prog else df_3
     
-    st.markdown(styles.card_end(), unsafe_allow_html=True)
+    
 
     # Segunda fila de filtros
     c5, c6, c7, c8 = st.columns(4)
@@ -303,18 +303,18 @@ with tab1:
         
         dias_criticos = carga_diaria[carga_diaria["N_Progs"] > 2]
 
-        st.markdown(styles.card_start(), unsafe_allow_html=True)
+     
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Sesiones", total_sesiones)
         k2.metric("Programas", total_progs)
         k3.metric("Días Activos", df_final_t1["DIAS/FECHAS"].nunique())
         k4.metric("Días Críticos (>2 Prog)", len(dias_criticos), delta_color="inverse")
-        st.markdown(styles.card_end(), unsafe_allow_html=True)
+        
 
         # Gráfico y Tabla de Críticos
         # col_g, col_t = st.columns([2, 1])  <-- Removed column layout
         
-        st.markdown(styles.card_start(), unsafe_allow_html=True)
+       
         # Gráfico (Arriba)
         df_plot = carga_diaria.copy()
         df_plot["Fecha"] = df_plot["DIAS/FECHAS"].dt.strftime("%d-%m-%Y")
@@ -349,7 +349,7 @@ with tab1:
             )
         else:
             st.success("¡Excelente! No hay días con sobrecarga (>2 programas) en esta selección.")
-        st.markdown(styles.card_end(), unsafe_allow_html=True)
+        
 
     # =============================================================================
     # TABLA DETALLADA
