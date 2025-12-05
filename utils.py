@@ -289,4 +289,4 @@ def generate_excel_report(df):
         resumen = df.groupby('COORDINADORA RESPONSABLE').size().reset_index(name='Total Clases')
         resumen.to_excel(writer, index=False, sheet_name='Resumen_Coordinadoras')
         
-    return output.getvalue(
+    return output.getvalue()
