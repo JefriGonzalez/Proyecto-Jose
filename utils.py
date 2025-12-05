@@ -2,99 +2,228 @@ import streamlit as st
 import pandas as pd
 import io
 from datetime import datetime
-from openpyxl import Workbook
-from openpyxl.utils.dataframe import dataframe_to_rows
-from io import BytesIO
 
-import unicodedata
+# --- CARGA DE DATOS ---
+import re
+import numpy as np
 
-def quitar_acentos(texto: str) -> str:
-    if texto is None:
-        return ""
-    return ''.join(
-        c for c in unicodedata.normalize('NFD', texto)
-        if unicodedata.category(c) != 'Mn'
-    )
+# --- CONSTANTES ---
+MESES = {
+    "enero": 1, "febrero": 2, "marzo": 3, "abril": 4,
+    "mayo": 5, "junio": 6, "julio": 7, "agosto": 8,
+    "septiembre": 9, "setiembre": 9,
+    "octubre": 10, "noviembre": 11, "diciembre": 12,
+}
 
 MESES_NOMBRE = {
-    1: "Enero",
-    2: "Febrero",
-    3: "Marzo",
-    4: "Abril",
-    5: "Mayo",
-    6: "Junio",
-    7: "Julio",
-    8: "Agosto",
-    9: "Septiembre",
-    10: "Octubre",
-    11: "Noviembre",
-    12: "Diciembre",
+    1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril",
+    5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto",
+    9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre",
 }
-# --- CARGA DE DATOS ---
-@st.cache_data
-def load_data(_file):
+
+DIAS_SEMANA_MAP = {
+    "Monday": "Lunes", "Tuesday": "Martes", "Wednesday": "Miércoles",
+    "Thursday": "Jueves", "Friday": "Viernes", "Saturday": "Sábado", "Sunday": "Domingo",
+}
+
+# --- FUNCIONES AUXILIARES ---
+def quitar_acentos(texto: str) -> str:
+    reemplazos = (("á", "a"), ("é", "e"), ("í", "i"), ("ó", "o"), ("ú", "u"))
+    t = str(texto)
+    for orig, repl in reemplazos:
+        t = t.replace(orig, repl)
+    return t
+
+def convertir_fecha_uai(texto):
+    if pd.isna(texto): return np.nan
+    if isinstance(texto, datetime): return texto
+    t = str(texto).strip().lower()
+    if not t: return np.nan
+    try: return pd.to_datetime(texto, dayfirst=True)
+    except: pass
+    m = re.search(r"(\d{1,2})\s+de\s+([a-záéíóú]+)\s+(\d{4})", t)
+    if not m: return np.nan
     try:
-        if _file.name.endswith('.xlsx') or _file.name.endswith('.xls'):
-            df = pd.read_excel(_file)
+        dia = int(m.group(1))
+        mes_txt = quitar_acentos(m.group(2))
+        anio = int(m.group(3))
+        mes = MESES.get(mes_txt, None)
+        if mes is None: return np.nan
+        return datetime(anio, mes, dia)
+    except: return np.nan
+
+# --- CARGA DE DATOS ---
+# @st.cache_data (Removed to avoid hashing issues with file objects)
+def load_data(file):
+    try:
+        # 1. Leer archivo crudo
+        if file.name.endswith('.xlsx') or file.name.endswith('.xls'):
+            df_raw = pd.read_excel(file, header=None)
         else:
-            df = pd.read_csv(_file)
- 
-        # Limpieza básica
+            df_raw = pd.read_csv(file, header=None)
+
+        # 2. Buscar fila de encabezados
+        keywords_header = ["DIAS/FECHAS", "FECHA", "DIA", "DATE"]
+        header_idx = None
+        # Optimization: Only search first 50 rows
+        df_scan = df_raw.head(50)
+        for keyword in keywords_header:
+            mask = df_scan.apply(lambda row: row.astype(str).str.contains(keyword, case=False, na=False)).any(axis=1)
+            if mask.any():
+                header_idx = df_scan[mask].index[0]
+                break
+        
+        if header_idx is None:
+            # Fallback: intentar leer normal si no encuentra header complejo
+            if file.name.endswith('.xlsx') or file.name.endswith('.xls'):
+                df = pd.read_excel(file)
+            else:
+                df = pd.read_csv(file)
+        else:
+            # Procesar desde el header encontrado
+            df = df_raw.loc[header_idx:].reset_index(drop=True)
+            df.columns = df.iloc[0].astype(str).str.strip().str.upper()
+            df = df[1:].reset_index(drop=True)
+
+        # 3. Normalizar columnas
         df.columns = df.columns.str.strip().str.upper()
-        
-        # Validar columnas mínimas
-        req_cols = ['COORDINADORA RESPONSABLE', 'DIAS/FECHAS']
-        if not all(col in df.columns for col in req_cols):
-            st.error(f"Faltan columnas requeridas: {req_cols}")
+        cols = list(df.columns)
+
+        def find_col(options):
+            for opt in options:
+                for c in cols:
+                    if opt in c: return c
             return None
- 
-        df = df.dropna(subset=req_cols)
-        df['DIAS/FECHAS'] = pd.to_datetime(df['DIAS/FECHAS'], errors='coerce')
-        df = df.dropna(subset=['DIAS/FECHAS'])
+
+        col_fecha = find_col(["DIAS/FECHAS", "FECHA", "DIA"])
+        col_coord = find_col(["COORDINADORA", "COORD"])
+        col_prog = find_col(["PROGRAMA", "CARRERA"])
+        col_sede = find_col(["SEDE", "UBICACION"])
+        col_prof = find_col(["PROFESOR", "DOCENTE", "RELATOR"])
         
-        # Normalización
-        df['COORDINADORA RESPONSABLE'] = df['COORDINADORA RESPONSABLE'].astype(str).str.upper().str.strip()
-        
-        if 'PROGRAMA' in df.columns:
-            df['PROGRAMA'] = df['PROGRAMA'].fillna('Sin Programa').astype(str).str.upper().str.strip()
-        else:
-            df['PROGRAMA'] = 'SIN PROGRAMA'
- 
-        if 'SEDE' in df.columns:
-            df['SEDE'] = df['SEDE'].fillna('ONLINE/OTRO').astype(str).str.upper().str.strip()
-        else:
-            df['SEDE'] = 'ONLINE/OTRO'
+        # Validar mínima
+        if not col_fecha:
+            st.error("No se encontró columna de Fecha.")
+            return None
             
-        # Calcular Modalidad
+        # Renombrar para estandarizar
+        rename_map = {col_fecha: "DIAS/FECHAS"}
+        if col_coord: rename_map[col_coord] = "COORDINADORA RESPONSABLE"
+        if col_prog: rename_map[col_prog] = "PROGRAMA"
+        if col_sede: rename_map[col_sede] = "SEDE"
+        if col_prof: rename_map[col_prof] = "PROFESOR"
+        
+        df = df.rename(columns=rename_map)
+        
+        # Si falta Coordinadora, avisar (es crítico para T_1)
+        if "COORDINADORA RESPONSABLE" not in df.columns:
+            # Si no existe, creamos una dummy o avisamos? T_1 depende de esto.
+            # Intentamos ser flexibles:
+            df["COORDINADORA RESPONSABLE"] = "SIN ASIGNAR"
+
+        # 4. Procesar Fechas
+        df["DIAS/FECHAS"] = df["DIAS/FECHAS"].apply(convertir_fecha_uai)
+        df = df.dropna(subset=["DIAS/FECHAS"])
+        
+        # 5. Columnas Calculadas
+        df['Dia_Semana'] = df['DIAS/FECHAS'].dt.day_name().map(DIAS_SEMANA_MAP)
+        df['Mes'] = df['DIAS/FECHAS'].dt.month.map(MESES_NOMBRE)
+        
+        # Normalizar textos
+        for col in ["COORDINADORA RESPONSABLE", "PROGRAMA", "SEDE", "PROFESOR"]:
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.upper().str.strip()
+            else:
+                df[col] = "SIN " + col
+
+        # Modalidad
         def get_modalidad(sede):
             s = str(sede).upper()
-            if 'ONLINE' in s or 'ZOOM' in s:
-                return 'Online'
-            if 'HIBRID' in s or 'HÍBRID' in s:
-                return 'Híbrida'
+            if 'ONLINE' in s or 'ZOOM' in s: return 'Online'
+            if 'HIBRID' in s or 'HÍBRID' in s: return 'Híbrida'
             return 'Presencial'
-            
+        
         df['Modalidad_Calc'] = df['SEDE'].apply(get_modalidad)
         
-        # Día de la semana
-        dias_map = {
-            0: "Lunes", 1: "Martes", 2: "Miércoles", 3: "Jueves",
-            4: "Viernes", 5: "Sábado", 6: "Domingo"
-        }
-        df['Dia_Semana'] = df['DIAS/FECHAS'].dt.dayofweek.map(dias_map)
+        # Intentar extraer horas si existen (para validaciones)
+        # Buscamos columnas de hora por posición relativa a fecha o por nombre
+        col_h_inicio = find_col(["HORA INICIO", "INICIO", "DESDE"])
+        col_h_fin = find_col(["HORA FIN", "FIN", "HASTA"])
         
+        if col_h_inicio and col_h_fin:
+             # Convertir a string para evitar ArrowTypeError en Streamlit
+             df["HORA_INICIO"] = pd.to_datetime(df[col_h_inicio].astype(str), errors='coerce').dt.time.astype(str)
+             df["HORA_FIN"] = pd.to_datetime(df[col_h_fin].astype(str), errors='coerce').dt.time.astype(str)
+             
+             # Crear columna HORARIO si no existe, como string
+             if "HORARIO" not in df.columns:
+                 df["HORARIO"] = df["HORA_INICIO"] + " - " + df["HORA_FIN"]
+        else:
+            # Intentar por posición (asumiendo Fecha + 1 y Fecha + 2 como en app.extr.py)
+            try:
+                idx_fecha = df.columns.get_loc("DIAS/FECHAS")
+                if idx_fecha + 2 < len(df.columns):
+                    df["HORA_INICIO"] = pd.to_datetime(df.iloc[:, idx_fecha+1].astype(str), errors='coerce').dt.time.astype(str)
+                    df["HORA_FIN"] = pd.to_datetime(df.iloc[:, idx_fecha+2].astype(str), errors='coerce').dt.time.astype(str)
+                    if "HORARIO" not in df.columns:
+                         df["HORARIO"] = df["HORA_INICIO"] + " - " + df["HORA_FIN"]
+            except:
+                pass
+        
+        # Asegurar que HORARIO sea string si existe
+        if "HORARIO" in df.columns:
+            df["HORARIO"] = df["HORARIO"].astype(str)
+
+        # 6. Calcular Duración en Horas
+        # Necesitamos objetos datetime/timedelta para restar
+        try:
+            # Convertir a datetime completo (usando fecha dummy) para poder restar
+            # Asumimos que HORA_INICIO y FIN están en formato HH:MM o HH:MM:SS
+            def to_td(h_str):
+                try:
+                    return pd.to_datetime(str(h_str), format="%H:%M:%S").time()
+                except:
+                    try: 
+                        return pd.to_datetime(str(h_str), format="%H:%M").time()
+                    except:
+                        return None
+
+            # Vectorizado es más rápido, pero con formatos mixtos es difícil.
+            # Usaremos pd.to_datetime con errors='coerce' sobre strings limpios
+            
+            # Asegurar formato HH:MM:SS para facilitar
+            s_ini = pd.to_datetime(df["HORA_INICIO"], format='%H:%M:%S', errors='coerce')
+            s_fin = pd.to_datetime(df["HORA_FIN"], format='%H:%M:%S', errors='coerce')
+            
+            # Si falló, intentar inferir
+            if s_ini.isna().all():
+                 s_ini = pd.to_datetime(df["HORA_INICIO"], errors='coerce')
+            if s_fin.isna().all():
+                 s_fin = pd.to_datetime(df["HORA_FIN"], errors='coerce')
+
+            df["Duracion_Horas"] = (s_fin - s_ini).dt.total_seconds() / 3600.0
+            
+            # Limpiar negativos o nulos
+            df["Duracion_Horas"] = df["Duracion_Horas"].fillna(0)
+            df.loc[df["Duracion_Horas"] < 0, "Duracion_Horas"] = 0
+            
+        except Exception as e:
+            # Si falla el cálculo, dejar en 0 para no romper
+            df["Duracion_Horas"] = 0.0
+            print(f"Warning: No se pudo calcular duración: {e}")
+
         return df
     except Exception as e:
-        st.error(f"Error al cargar archivo: {e}")
-        return None
- 
+        # Re-lanzar la excepción para que sea manejada por la app principal
+        raise Exception(f"Error en utils.load_data: {str(e)}")
+
 # --- FILTROS ---
 def reset_filters():
     # Limpia todas las keys de session_state que empiecen con 't' (t1_, t2_, etc)
     for key in list(st.session_state.keys()):
         if key.startswith(('t1_', 't2_', 't3_', 't4_')):
             del st.session_state[key]
- 
+
 def render_filters(df, prefix="t1"):
     """
     Renderiza filtros comunes y retorna el dataframe filtrado.
@@ -149,22 +278,15 @@ def render_filters(df, prefix="t1"):
     if sel_dia: mask &= df['Dia_Semana'].isin(sel_dia)
     
     return df[mask]
- 
+
 # --- EXPORTAR ---
 def generate_excel_report(df):
-    output = BytesIO()
-
-    # Crear workbook
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Reporte"
-
-    # Insertar el DataFrame fila por fila
-    for row in dataframe_to_rows(df, index=False, header=True):
-        ws.append(row)
-
-    # Guardar dentro del buffer
-    wb.save(output)
-    output.seek(0)
-
-    return output
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Datos_Completos')
+        
+        # Resumen por coord
+        resumen = df.groupby('COORDINADORA RESPONSABLE').size().reset_index(name='Total Clases')
+        resumen.to_excel(writer, index=False, sheet_name='Resumen_Coordinadoras')
+        
+    return output.getvalue(
