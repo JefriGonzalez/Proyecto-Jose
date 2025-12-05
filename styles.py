@@ -1,4 +1,4 @@
-APP_STYLE = """
+PP_STYLE = """
 <style>
     /* Global Background - LIGHT THEME */
     .stApp {
@@ -149,4 +149,4 @@ def card_start():
     return '<div class="card">'
 
 def card_end():
-    return '</div>
+    return '</div>'
