@@ -23,8 +23,6 @@ import requests
 import requests
 import io
 import hashlib
-import tempfile
-
 
 # -----------------------------------------------------------------------------
 # IMPORTAR MÓDULOS LOCALES
@@ -33,18 +31,6 @@ import charts
 import utils
 import styles
 
-def quitar_acentos(texto):
-    return ''.join(
-        c for c in unicodedata.normalize('NFD', str(texto))
-        if unicodedata.category(c) != 'Mn'
-    )
-
-MESES = {
-    "enero": 1, "febrero": 2, "marzo": 3, "abril": 4,
-    "mayo": 5, "junio": 6, "julio": 7, "agosto": 8,
-    "septiembre": 9, "setiembre": 9,
-    "octubre": 10, "noviembre": 11, "diciembre": 12,
-}
 # -----------------------------------------------------------------------------
 # CONFIGURACIÓN DE PÁGINA
 # -----------------------------------------------------------------------------
@@ -66,13 +52,15 @@ class FileLike(io.BytesIO):
         self.name = name
 
 @st.cache_data(ttl=3600)
-def cargar_datos_optimizado(file_or_url, es_url=False):
+def cargar_datos_optimizado(file_hash, file_name, _file_content, es_url=False):
+    """
+    Carga y procesa el archivo. Usa caché para no recargar en cada interacción.
+    Recibe hash para la key del caché, y _file_content (excluido del hash) para procesar.
+    """
     try:
-        archivo_final = file_or_url
-        
         if es_url:
-            url = file_or_url.strip()
-            
+            url = _file_content.strip() # En este caso file_content es la URL
+            # Forzar descarga en OneDrive
             if ("onedrive.live.com" in url or "1drv.ms" in url) and "download=1" not in url:
                 sep = "&" if "?" in url else "?"
                 url = url + sep + "download=1"
@@ -80,20 +68,25 @@ def cargar_datos_optimizado(file_or_url, es_url=False):
             resp = requests.get(url)
             resp.raise_for_status()
             
+            # Inferir nombre
             nombre = "data_onedrive.xlsx"
-            if ".csv" in url.lower():
-                nombre = "data_onedrive.csv"
+            if ".csv" in url.lower(): nombre = "data_onedrive.csv"
             
             archivo_final = FileLike(resp.content, nombre)
+        else:
+            # Reconstruir FileLike desde bytes
+            archivo_final = FileLike(_file_content, file_name)
 
+        # Usamos la función load_data de tu utils.py
         df = utils.load_data(archivo_final)
-        
         if df is None:
             return pd.DataFrame()
         return df
 
     except Exception as e:
         st.error(f"Error crítico al cargar datos: {e}")
+        import traceback
+        st.code(traceback.format_exc())
         return pd.DataFrame()
 
 # Funciones de cálculo rápido para los Tabs
@@ -155,7 +148,15 @@ with st.sidebar:
     # Prioridad: Archivo subido > Link
     if uploaded_file:
         # Leer en memoria
-        df_base = cargar_datos_optimizado(uploaded_file, es_url=False)
+        bytes_data = uploaded_file.getvalue()
+        
+        # Calcular hash MD5 rápido para usar como key de caché
+        # Esto evita que Streamlit tenga que hashear todo el archivo grande en cada rerun
+        file_hash = hashlib.md5(bytes_data).hexdigest()
+        
+        # Pasamos hash, nombre y el contenido (con _ para que st.cache_data lo ignore si se configurara así, 
+        # pero aquí lo importante es que el hash cambia si el archivo cambia)
+        df_base = cargar_datos_optimizado(file_hash, uploaded_file.name, bytes_data, es_url=False)
             
     elif onedrive_url:
         try:
@@ -238,7 +239,7 @@ with tab1:
     st.markdown("## 🔎 Gestión Detallada por Coordinadora")
     
     # --- LÓGICA DE CASCADA ---
-   
+    st.markdown(styles.card_start(), unsafe_allow_html=True)
     st.markdown("### 🔍 Filtros")
     # Paso 1: Año y Mes
     c1, c2, c3, c4 = st.columns(4)
@@ -263,7 +264,7 @@ with tab1:
         sel_prog = st.multiselect("4. Programa", progs_disp, key="t1_prog", placeholder="Todos")
         df_4 = df_3[df_3["PROGRAMA"].isin(sel_prog)] if sel_prog else df_3
     
-    
+    st.markdown(styles.card_end(), unsafe_allow_html=True)
 
     # Segunda fila de filtros
     c5, c6, c7, c8 = st.columns(4)
@@ -315,18 +316,18 @@ with tab1:
         
         dias_criticos = carga_diaria[carga_diaria["N_Progs"] > 2]
 
-     
+        st.markdown(styles.card_start(), unsafe_allow_html=True)
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Sesiones", total_sesiones)
         k2.metric("Programas", total_progs)
         k3.metric("Días Activos", df_final_t1["DIAS/FECHAS"].nunique())
         k4.metric("Días Críticos (>2 Prog)", len(dias_criticos), delta_color="inverse")
-        
+        st.markdown(styles.card_end(), unsafe_allow_html=True)
 
         # Gráfico y Tabla de Críticos
         # col_g, col_t = st.columns([2, 1])  <-- Removed column layout
         
-       
+        st.markdown(styles.card_start(), unsafe_allow_html=True)
         # Gráfico (Arriba)
         df_plot = carga_diaria.copy()
         df_plot["Fecha"] = df_plot["DIAS/FECHAS"].dt.strftime("%d-%m-%Y")
@@ -361,7 +362,7 @@ with tab1:
             )
         else:
             st.success("¡Excelente! No hay días con sobrecarga (>2 programas) en esta selección.")
-        
+        st.markdown(styles.card_end(), unsafe_allow_html=True)
 
     # =============================================================================
     # TABLA DETALLADA
@@ -487,11 +488,7 @@ with tab3:
     # Filtro Mes
     # Usamos map con MESES_NOMBRE para asegurar nombres en español consistentes
     meses_nombres = df_t3["DIAS/FECHAS"].dt.month.map(utils.MESES_NOMBRE).unique()
-    import unicodedata
-
-
-    meses_disp = sorted(meses_nombres,key=lambda x: MESES.get(quitar_acentos(str(x)).lower(), 99))
-
+    meses_disp = sorted(meses_nombres, key=lambda x: utils.MESES.get(utils.quitar_acentos(str(x)).lower(), 99))
     sel_mes_heat = c_heat_1.multiselect("Filtrar Mes", meses_disp, key="t3_heat_mes", placeholder="Todos")
     
     # Filtro Día Semana
