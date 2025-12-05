@@ -395,16 +395,21 @@ with tab2:
     st.markdown("## 📊 Comparativa de Carga")
     st.info("💡 Filtros independientes (Vacío = Todos)")
 
-    c2_1, c2_2, c2_3 = st.columns(3)
+    c2_1, c2_2, c2_3, c2_4 = st.columns(4)
     sel_y2 = c2_1.multiselect("Año", sorted(df_base["DIAS/FECHAS"].dt.year.unique()), key="t2_y", placeholder="Todos")
     sel_c2 = c2_2.multiselect("Coordinadoras", sorted(df_base["COORDINADORA RESPONSABLE"].unique()), key="t2_c", placeholder="Todas")
     sel_m2 = c2_3.multiselect("Modalidad", sorted(df_base["Modalidad_Calc"].unique()), key="t2_m", placeholder="Todas")
+    
+    # Nuevo filtro de Mes
+    meses_disp_t2 = sorted(df_base["Mes"].unique()) if "Mes" in df_base.columns else []
+    sel_mes2 = c2_4.multiselect("Mes", meses_disp_t2, key="t2_mes", placeholder="Todos")
 
     # Aplicar filtros
     mask2 = pd.Series(True, index=df_base.index)
     if sel_y2: mask2 &= df_base["DIAS/FECHAS"].dt.year.isin(sel_y2)
     if sel_c2: mask2 &= df_base["COORDINADORA RESPONSABLE"].isin(sel_c2)
     if sel_m2: mask2 &= df_base["Modalidad_Calc"].isin(sel_m2)
+    if sel_mes2: mask2 &= df_base["Mes"].isin(sel_mes2)
     
     df_t2 = df_base[mask2].copy()
 
