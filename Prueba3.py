@@ -1,160 +1,91 @@
 import streamlit as st
-import pandas as pd
-import plotly.express as px
-from datetime import datetime
-import re
-import io
-import requests
+elif onedrive_url:
+try:
+url = onedrive_url
 
-# -----------------------------------------------------------------------------
-# IMPORTAR MÓDULOS LOCALES
-# -----------------------------------------------------------------------------
-# Asegúrate de que existan styles.py, charts.py y utils.py en tu carpeta
-import styles
-import charts
-import utils
 
-# -----------------------------------------------------------------------------
-# CONFIGURACIÓN DE PÁGINA
-# -----------------------------------------------------------------------------
-st.set_page_config(
-    page_title="Gestor Académico Pro",
-    layout="wide",
-    page_icon="🎓",
-)
-st.markdown(styles.APP_STYLE, unsafe_allow_html=True)
+# Convertir SharePoint/OneDrive en descarga directa
+if "sharepoint.com" in url or "onedrive.live.com" in url:
+if "?" in url:
+url = url.split("?")[0] + "?download=1"
+else:
+url = url + "?download=1"
 
-# -----------------------------------------------------------------------------
-# FUNCIONES AUXILIARES Y CACHÉ
-# -----------------------------------------------------------------------------
 
-class FileLike(io.BytesIO):
-    """Wrapper para manejar archivos en memoria con atributo .name"""
-    def __init__(self, content: bytes, name: str):
-        super().__init__(content)
-        self.name = name
+with st.spinner("Descargando archivo..."):
+resp = requests.get(url)
+resp.raise_for_status()
+file_bytes = resp.content
+file_hash = hashlib.md5(file_bytes).hexdigest()
 
-@st.cache_data(ttl=3600)
-def cargar_datos_optimizado(file_or_url, es_url=False):
-    """
-    Carga y procesa el archivo. Usa caché para no recargar en cada interacción.
-    """
-    try:
-        archivo_final = file_or_url
-        
-        if es_url:
-            url = file_or_url.strip()
-            # Forzar descarga en OneDrive
-            if ("onedrive.live.com" in url or "1drv.ms" in url) and "download=1" not in url:
-                sep = "&" if "?" in url else "?"
-                url = url + sep + "download=1"
-            
-            resp = requests.get(url)
-            resp.raise_for_status()
-            
-            # Inferir nombre
-            nombre = "data_onedrive.xlsx"
-            if ".csv" in url.lower(): nombre = "data_onedrive.csv"
-            
-            archivo_final = FileLike(resp.content, nombre)
 
-        # Usamos la función load_data de tu utils.py
-        df = utils.load_data(archivo_final)
-        if df is None:
-            return pd.DataFrame()
-        return df
+except Exception as e:
+st.error(f"Error al descargar desde el link: {e}")
 
-    except Exception as e:
-        st.error(f"Error crítico al cargar datos: {e}")
-        return pd.DataFrame()
 
-# Funciones de cálculo rápido para los Tabs
-def resumen_coordinadoras_semana(df_filtrado: pd.DataFrame) -> pd.DataFrame:
-    if df_filtrado.empty: return pd.DataFrame()
-    cols_req = ["Dia_Semana", "Modalidad_Calc", "PROGRAMA", "COORDINADORA RESPONSABLE"]
-    if not all(c in df_filtrado.columns for c in cols_req): return pd.DataFrame()
+# ------------------------------------------------------------
+# Validación: ¿Hubo archivo?
+# ------------------------------------------------------------
+if not file_bytes:
+st.info("👋 Para comenzar, por favor carga tu archivo de planificación.")
+st.stop()
 
-    g = df_filtrado.groupby("COORDINADORA RESPONSABLE")
-    base = g.agg(dias_clase_semana=("Dia_Semana", "nunique")).reset_index()
-    
-    # Concatenar textos únicos
-    base["Modalidades"] = g["Modalidad_Calc"].apply(lambda x: ", ".join(sorted(x.dropna().unique())))
-    base["Programas"] = g["PROGRAMA"].apply(lambda x: ", ".join(sorted(x.dropna().unique())))
-    
-    return base.rename(columns={
-        "COORDINADORA RESPONSABLE": "Coordinadora", 
-        "dias_clase_semana": "Días Activos (Semana)"
-    })
 
-def resumen_modalidad(df_f):
-    if df_f.empty or "Modalidad_Calc" not in df_f.columns: return pd.DataFrame()
-    return df_f.groupby("Modalidad_Calc", as_index=False).agg(
-        Sesiones=("PROGRAMA", "size"), Programas=("PROGRAMA", "nunique")
-    ).sort_values("Sesiones", ascending=False)
+# ------------------------------------------------------------
+# Cargar datos optimizados
+# ------------------------------------------------------------
+df_base = cargar_datos_optimizado(file_hash, file_bytes)
 
-def resumen_sede(df_f):
-    if df_f.empty or "SEDE" not in df_f.columns: return pd.DataFrame()
-    return df_f.groupby("SEDE", as_index=False).agg(
-        Sesiones=("PROGRAMA", "size"), Programas=("PROGRAMA", "nunique")
-    ).sort_values("Sesiones", ascending=False)
 
-def resumen_calidad_datos(df_all):
-    campos = ["DIAS/FECHAS", "PROGRAMA", "COORDINADORA RESPONSABLE", "Modalidad_Calc", "SEDE", "HORARIO"]
-    data = []
-    total = len(df_all)
-    if total == 0: return pd.DataFrame()
-    for col in campos:
-        if col in df_all.columns:
-            faltantes = df_all[col].isna().sum()
-            data.append({"Campo": col, "Faltantes": faltantes, "%": round((faltantes/total)*100, 1)})
-    return pd.DataFrame(data)
-
-# -----------------------------------------------------------------------------
-# INTERFAZ: SIDEBAR
-# -----------------------------------------------------------------------------
-st.title("🎓 Dashboard de Gestión Académica")
+# ------------------------------------------------------------
+# Botón de descarga si hay datos
+# ------------------------------------------------------------
+st.markdown("---")
 st.markdown("---")
 
-with st.sidebar:
-    st.header("📂 Panel de Control")
-    
-    # Opción única: Subir archivo
-    uploaded_file = st.file_uploader("Sube Excel o CSV", type=["xlsx", "csv"])
-    
-    df_base = pd.DataFrame()
-    if uploaded_file:
-        df_base = cargar_datos_optimizado(uploaded_file, es_url=False)
 
-    st.markdown("---")
-    
-    if not df_base.empty:
-        st.success("✅ Datos cargados")
-        # Botón descarga reporte completo
-        excel_data = utils.generate_excel_report(df_base)
-        st.download_button(
-            label="📤 Reporte Completo (Excel)",
-            data=excel_data,
-            file_name="Reporte_Gestion_Total.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
-    
-    st.markdown("---")
-    if st.button("🧹 Resetear Filtros"):
-        utils.reset_filters()
-        st.rerun()
+if not df_base.empty:
+st.success("Información cargada correctamente.")
 
-# Detener si no hay datos
+
+excel_data = utils.generate_excel_report(df_base)
+st.download_button(
+label="📤 Descargar Reporte Completo (Excel)",
+data=excel_data,
+file_name="Reporte_Gestion_Total.xlsx",
+mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+use_container_width=True
+)
+
+
+st.markdown("---")
+
+
+if st.button("🧹 Resetear Filtros"):
+utils.reset_filters()
+st.rerun()
+
+
+# -----------------------------------------------------------------------------
+# VALIDACIONES FINALES ANTES DE RENDERIZAR
+# -----------------------------------------------------------------------------
 if df_base.empty:
-    st.info("👋 Para comenzar, por favor carga tu archivo de planificación.")
-    st.stop()
+st.info("👋 Para comenzar, por favor carga tu archivo de planificación.")
+st.stop()
+sys.exit()
 
-# Validación extra de columnas antes de continuar
+
+# Validación de columna requerida
 if "DIAS/FECHAS" not in df_base.columns:
-    st.error("❌ Error: El archivo cargado no contiene la columna 'DIAS/FECHAS'. Por favor verifica el formato.")
-    st.write("Columnas detectadas:", df_base.columns.tolist())
-    st.stop()
+st.error("❌ Error: El archivo cargado no contiene la columna 'DIAS/FECHAS'.")
+st.write("Columnas detectadas:", df_base.columns.tolist())
+st.stop()
+sys.exit()
 
+
+# -----------------------------------------------------------------------------
+# (Aquí seguiría el resto de tu lógica del dashboard)
+# -----------------------------------------------------------------------------
 # -----------------------------------------------------------------------------
 # TABS PRINCIPALES
 # -----------------------------------------------------------------------------
