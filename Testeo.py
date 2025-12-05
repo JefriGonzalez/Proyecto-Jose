@@ -1,3 +1,21 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+from datetime import datetime
+import re
+import io
+import requests
+
+# -----------------------------------------------------------------------------
+# IMPORTAR MÓDULOS LOCALES
+# -----------------------------------------------------------------------------
+# Asegúrate de que existan styles.py, charts.py y utils.py en tu carpeta
+import styles
+import charts
+import utils
+
+# ---------------
+
 # -----------------------------------------------------------------------------
 # CONFIGURACIÓN DE PÁGINA
 # -----------------------------------------------------------------------------
