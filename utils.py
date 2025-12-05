@@ -7,12 +7,12 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 from io import BytesIO
 # --- CARGA DE DATOS ---
 @st.cache_data
-def load_data(file):
+def load_data(_file):
     try:
-        if file.name.endswith('.xlsx') or file.name.endswith('.xls'):
-            df = pd.read_excel(file)
+        if _file.name.endswith('.xlsx') or _file.name.endswith('.xls'):
+            df = pd.read_excel(_file)
         else:
-            df = pd.read_csv(file)
+            df = pd.read_csv(_file)
  
         # Limpieza básica
         df.columns = df.columns.str.strip().str.upper()
