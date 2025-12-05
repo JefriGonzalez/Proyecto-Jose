@@ -45,8 +45,8 @@ class FileLike(io.BytesIO):
         super().__init__(content)
         self.name = name
 
-@st.cache_data(ttl=3600)
-def cargar_datos_optimizado(file_hash, file_name, _file_content, es_url=False):
+@st.cache_data
+def cargar_datos_optimizado(file_hash, _file_content, es_url=False):
     """
     Carga y procesa el archivo. Usa caché para no recargar en cada interacción.
     Recibe hash para la key del caché, y _file_content (excluido del hash) para procesar.
@@ -150,7 +150,7 @@ with st.sidebar:
         
         # Pasamos hash, nombre y el contenido (con _ para que st.cache_data lo ignore si se configurara así, 
         # pero aquí lo importante es que el hash cambia si el archivo cambia)
-        df_base = cargar_datos_optimizado(file_hash, uploaded_file.name, bytes_data, es_url=False)
+        df_base = cargar_datos_optimizado(file_hash, _file_content)
             
     elif onedrive_url:
         try:
