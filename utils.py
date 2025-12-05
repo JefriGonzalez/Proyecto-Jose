@@ -6,6 +6,16 @@ from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 from io import BytesIO
 
+import unicodedata
+
+def quitar_acentos(texto: str) -> str:
+    if texto is None:
+        return ""
+    return ''.join(
+        c for c in unicodedata.normalize('NFD', texto)
+        if unicodedata.category(c) != 'Mn'
+    )
+
 MESES_NOMBRE = {
     1: "Enero",
     2: "Febrero",
