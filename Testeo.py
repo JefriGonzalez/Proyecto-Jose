@@ -1,20 +1,35 @@
+import os
+import sys
+from streamlit.web import cli as stcli
+
+# Ensure the current directory is in sys.path so local modules like utils can be imported
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
+
+# Auto-run block removed to prevent conflicts
+# if __name__ == "__main__":
+#     if not os.environ.get("STREAMLIT_RUNNING_IN_SUBPROCESS"):
+#         os.environ["STREAMLIT_RUNNING_IN_SUBPROCESS"] = "true"
+#         sys.argv = ["streamlit", "run", sys.argv[0], "--server.port", "8501"]
+#         sys.exit(stcli.main())
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from datetime import datetime
-import re
-import io
 import requests
+import requests
+import io
+import hashlib
 
 # -----------------------------------------------------------------------------
 # IMPORTAR MÓDULOS LOCALES
 # -----------------------------------------------------------------------------
-# Asegúrate de que existan styles.py, charts.py y utils.py en tu carpeta
-import styles
 import charts
 import utils
-
-# ---------------
+import styles
 
 # -----------------------------------------------------------------------------
 # CONFIGURACIÓN DE PÁGINA
@@ -37,15 +52,14 @@ class FileLike(io.BytesIO):
         self.name = name
 
 @st.cache_data(ttl=3600)
-def cargar_datos_optimizado(file_or_url, es_url=False):
+def cargar_datos_optimizado(file_hash, file_name, _file_content, es_url=False):
     """
     Carga y procesa el archivo. Usa caché para no recargar en cada interacción.
+    Recibe hash para la key del caché, y _file_content (excluido del hash) para procesar.
     """
     try:
-        archivo_final = file_or_url
-        
         if es_url:
-            url = file_or_url.strip()
+            url = _file_content.strip() # En este caso file_content es la URL
             # Forzar descarga en OneDrive
             if ("onedrive.live.com" in url or "1drv.ms" in url) and "download=1" not in url:
                 sep = "&" if "?" in url else "?"
@@ -59,6 +73,9 @@ def cargar_datos_optimizado(file_or_url, es_url=False):
             if ".csv" in url.lower(): nombre = "data_onedrive.csv"
             
             archivo_final = FileLike(resp.content, nombre)
+        else:
+            # Reconstruir FileLike desde bytes
+            archivo_final = FileLike(_file_content, file_name)
 
         # Usamos la función load_data de tu utils.py
         df = utils.load_data(archivo_final)
@@ -68,6 +85,8 @@ def cargar_datos_optimizado(file_or_url, es_url=False):
 
     except Exception as e:
         st.error(f"Error crítico al cargar datos: {e}")
+        import traceback
+        st.code(traceback.format_exc())
         return pd.DataFrame()
 
 # Funciones de cálculo rápido para los Tabs
@@ -120,12 +139,53 @@ st.markdown("---")
 with st.sidebar:
     st.header("📂 Panel de Control")
     
-    # Opción única: Subir archivo
+    # Opción: Subir archivo o Link
     uploaded_file = st.file_uploader("Sube Excel o CSV", type=["xlsx", "csv"])
+    onedrive_url = st.text_input("O pega un Link de OneDrive / SharePoint")
     
     df_base = pd.DataFrame()
+    
+    # Prioridad: Archivo subido > Link
     if uploaded_file:
-        df_base = cargar_datos_optimizado(uploaded_file, es_url=False)
+        # Leer en memoria
+        bytes_data = uploaded_file.getvalue()
+        
+        # Calcular hash MD5 rápido para usar como key de caché
+        # Esto evita que Streamlit tenga que hashear todo el archivo grande en cada rerun
+        file_hash = hashlib.md5(bytes_data).hexdigest()
+        
+        # Pasamos hash, nombre y el contenido (con _ para que st.cache_data lo ignore si se configurara así, 
+        # pero aquí lo importante es que el hash cambia si el archivo cambia)
+        df_base = cargar_datos_optimizado(file_hash, uploaded_file.name, bytes_data, es_url=False)
+            
+    elif onedrive_url:
+        try:
+            # Transformar link de OneDrive para descarga directa si es necesario
+            url = onedrive_url
+            if "sharepoint.com" in url or "onedrive.live.com" in url:
+                # Intentar forzar descarga
+                if "?" in url:
+                    url = url.split("?")[0] + "?download=1"
+                else:
+                    url = url + "?download=1"
+            
+            with st.spinner("Descargando archivo..."):
+                resp = requests.get(url)
+                resp.raise_for_status()
+                
+                # Crear objeto tipo archivo en memoria
+                nombre = "archivo_onedrive.xlsx" # Asumimos xlsx por defecto
+                if "csv" in url.lower(): nombre = "archivo.csv"
+                
+                file_obj = io.BytesIO(resp.content)
+                file_obj.name = nombre
+                
+                df_base = utils.load_data(file_obj)
+                
+        except Exception as e:
+            st.error(f"Error al descargar desde el link: {e}")
+
+    st.markdown("---")
 
     st.markdown("---")
     
@@ -150,13 +210,14 @@ with st.sidebar:
 if df_base.empty:
     st.info("👋 Para comenzar, por favor carga tu archivo de planificación.")
     st.stop()
+    sys.exit()
 
 # Validación extra de columnas antes de continuar
 if "DIAS/FECHAS" not in df_base.columns:
     st.error("❌ Error: El archivo cargado no contiene la columna 'DIAS/FECHAS'. Por favor verifica el formato.")
     st.write("Columnas detectadas:", df_base.columns.tolist())
     st.stop()
-
+    sys.exit()
 
 # -----------------------------------------------------------------------------
 # TABS PRINCIPALES
@@ -450,7 +511,7 @@ with tab3:
     # Aplicar filtros
     df_heat = df_t3.copy()
     if sel_mes_heat:
-        df_heat = df_heat[df_heat["DIAS/FECHAS"].dt.month_name().isin(sel_mes_heat)]
+        df_heat = df_heat[df_heat["DIAS/FECHAS"].dt.month.map(utils.MESES_NOMBRE).isin(sel_mes_heat)]
     if sel_dia_heat:
         df_heat = df_heat[df_heat["Dia_Semana"].isin(sel_dia_heat)]
     if sel_sede_heat:
