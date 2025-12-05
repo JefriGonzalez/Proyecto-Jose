@@ -139,9 +139,4 @@ CUSTOM_LOADER = """
 </div>
 """
  
-# Helper para crear tarjetas
-def card_start():
-    return '<div class="card">'
- 
-def card_end():
-    return '</div>'
+
