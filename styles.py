@@ -1,4 +1,4 @@
-PP_STYLE = """
+APP_STYLE = """
 <style>
     /* Global Background - LIGHT THEME */
     .stApp {
