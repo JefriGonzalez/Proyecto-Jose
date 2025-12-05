@@ -33,6 +33,18 @@ import charts
 import utils
 import styles
 
+def quitar_acentos(texto):
+    return ''.join(
+        c for c in unicodedata.normalize('NFD', str(texto))
+        if unicodedata.category(c) != 'Mn'
+    )
+
+MESES = {
+    "enero": 1, "febrero": 2, "marzo": 3, "abril": 4,
+    "mayo": 5, "junio": 6, "julio": 7, "agosto": 8,
+    "septiembre": 9, "setiembre": 9,
+    "octubre": 10, "noviembre": 11, "diciembre": 12,
+}
 # -----------------------------------------------------------------------------
 # CONFIGURACIÓN DE PÁGINA
 # -----------------------------------------------------------------------------
@@ -475,7 +487,11 @@ with tab3:
     # Filtro Mes
     # Usamos map con MESES_NOMBRE para asegurar nombres en español consistentes
     meses_nombres = df_t3["DIAS/FECHAS"].dt.month.map(utils.MESES_NOMBRE).unique()
-    meses_disp = sorted(meses_nombres, key=lambda x: utils.MESES.get(utils.quitar_acentos(str(x)).lower(), 99))
+    import unicodedata
+
+
+    meses_disp = sorted(meses_nombres,key=lambda x: MESES.get(quitar_acentos(str(x)).lower(), 99))
+
     sel_mes_heat = c_heat_1.multiselect("Filtrar Mes", meses_disp, key="t3_heat_mes", placeholder="Todos")
     
     # Filtro Día Semana
