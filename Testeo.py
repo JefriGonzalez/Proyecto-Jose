@@ -7,12 +7,6 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
-# Auto-run block removed to prevent conflicts
-if __name__ == "__main__":
-    if not os.environ.get("STREAMLIT_RUNNING_IN_SUBPROCESS"):
-        os.environ["STREAMLIT_RUNNING_IN_SUBPROCESS"] = "true"
-        sys.argv = ["streamlit", "run", sys.argv[0], "--server.port", "8501"]
-        sys.exit(stcli.main())
 
 import streamlit as st
 import pandas as pd
