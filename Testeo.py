@@ -2,6 +2,10 @@ import os
 import sys
 from streamlit.web import cli as stcli
 
+# Ensure the current directory is in sys.path so local modules like utils can be imported
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
 
 
 import streamlit as st
