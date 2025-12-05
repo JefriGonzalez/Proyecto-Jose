@@ -147,110 +147,43 @@ with st.sidebar:
     
     # Prioridad: Archivo subido > Link
     if uploaded_file:
-        try:
-            # Leer el archivo en memoria directamente
-            if uploaded_file.name.endswith('.xlsx') or uploaded_file.name.endswith('.xls'):
-                # Guardar en un archivo temporal primero
-                import tempfile
-                import os
-                
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
-                    # Escribir el contenido
-                    tmp.write(uploaded_file.getvalue())
-                    tmp_path = tmp.name
-                
-                # Crear un objeto archivo con la ruta real
-                class FileWithPath:
-                    def __init__(self, path, name):
-                        self.name = name
-                        self.path = path
-                    
-                    def __enter__(self):
-                        return open(self.path, 'rb')
-                    
-                    def __exit__(self, exc_type, exc_val, exc_tb):
-                        pass
-                
-                # Crear objeto similar a archivo
-                file_obj = FileWithPath(tmp_path, uploaded_file.name)
-                
-                # Cargar datos
-                df_base = utils.load_data(file_obj)
-                
-                # Limpiar archivo temporal
-                try:
-                    os.unlink(tmp_path)
-                except:
-                    pass
-                    
-            else:  # CSV
-                # Para CSV podemos usar directamente los bytes
-                file_obj = io.BytesIO(uploaded_file.getvalue())
-                file_obj.name = uploaded_file.name
-                df_base = utils.load_data(file_obj)
-                
-            if df_base is None:
-                st.error("Error al procesar el archivo")
-                df_base = pd.DataFrame()
-                
-        except Exception as e:
-            st.error(f"Error al cargar archivo: {e}")
-            import traceback
-            st.error(traceback.format_exc())
+        # Leer en memoria
+        bytes_data = uploaded_file.getvalue()
+        
+        # Calcular hash MD5 rápido para usar como key de caché
+        # Esto evita que Streamlit tenga que hashear todo el archivo grande en cada rerun
+        file_hash = hashlib.md5(bytes_data).hexdigest()
+        
+        # Pasamos hash, nombre y el contenido (con _ para que st.cache_data lo ignore si se configurara así, 
+        # pero aquí lo importante es que el hash cambia si el archivo cambia)
+        df_base = cargar_datos_optimizado(file_hash, uploaded_file.name, bytes_data, es_url=False)
             
-    elif onedrive_url and onedrive_url.strip():
+    elif onedrive_url:
         try:
             # Transformar link de OneDrive para descarga directa si es necesario
-            url = onedrive_url.strip()
-            if ("sharepoint.com" in url or "onedrive.live.com" in url) and "download=1" not in url:
-                sep = "&" if "?" in url else "?"
-                url = url + sep + "download=1"
+            url = onedrive_url
+            if "sharepoint.com" in url or "onedrive.live.com" in url:
+                # Intentar forzar descarga
+                if "?" in url:
+                    url = url.split("?")[0] + "?download=1"
+                else:
+                    url = url + "?download=1"
             
             with st.spinner("Descargando archivo..."):
                 resp = requests.get(url)
                 resp.raise_for_status()
                 
                 # Crear objeto tipo archivo en memoria
-                nombre = "archivo_onedrive.xlsx"
-                if ".csv" in url.lower(): 
-                    nombre = "archivo.csv"
+                nombre = "archivo_onedrive.xlsx" # Asumimos xlsx por defecto
+                if "csv" in url.lower(): nombre = "archivo.csv"
                 
-                # Para archivos descargados, también usar temporal
-                import tempfile
-                import os
+                file_obj = io.BytesIO(resp.content)
+                file_obj.name = nombre
                 
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx' if '.xlsx' in url.lower() else '.csv') as tmp:
-                    tmp.write(resp.content)
-                    tmp_path = tmp.name
-                
-                class FileWithPath:
-                    def __init__(self, path, name):
-                        self.name = name
-                        self.path = path
-                    
-                    def __enter__(self):
-                        return open(self.path, 'rb')
-                    
-                    def __exit__(self, exc_type, exc_val, exc_tb):
-                        pass
-                
-                file_obj = FileWithPath(tmp_path, nombre)
                 df_base = utils.load_data(file_obj)
                 
-                # Limpiar archivo temporal
-                try:
-                    os.unlink(tmp_path)
-                except:
-                    pass
-                
-                if df_base is None or df_base.empty:
-                    st.error("No se pudieron cargar los datos desde el enlace.")
-                    df_base = pd.DataFrame()
-                    
         except Exception as e:
             st.error(f"Error al descargar desde el link: {e}")
-            import traceback
-            st.error(traceback.format_exc())
 
     st.markdown("---")
 
