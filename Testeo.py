@@ -23,6 +23,8 @@ import requests
 import requests
 import io
 import hashlib
+import tempfile
+
 
 # -----------------------------------------------------------------------------
 # IMPORTAR MÓDULOS LOCALES
