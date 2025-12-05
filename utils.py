@@ -282,7 +282,7 @@ def render_filters(df, prefix="t1"):
 # --- EXPORTAR ---
 def generate_excel_report(df):
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Datos_Completos')
         
         # Resumen por coord
