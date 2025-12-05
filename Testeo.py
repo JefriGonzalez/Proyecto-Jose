@@ -54,15 +54,13 @@ class FileLike(io.BytesIO):
         self.name = name
 
 @st.cache_data(ttl=3600)
-def cargar_datos_optimizado(file_hash, file_name, _file_content, es_url=False):
-    """
-    Carga y procesa el archivo. Usa caché para no recargar en cada interacción.
-    Recibe hash para la key del caché, y _file_content (excluido del hash) para procesar.
-    """
+def cargar_datos_optimizado(file_or_url, es_url=False):
     try:
+        archivo_final = file_or_url
+        
         if es_url:
-            url = _file_content.strip() # En este caso file_content es la URL
-            # Forzar descarga en OneDrive
+            url = file_or_url.strip()
+            
             if ("onedrive.live.com" in url or "1drv.ms" in url) and "download=1" not in url:
                 sep = "&" if "?" in url else "?"
                 url = url + sep + "download=1"
@@ -70,25 +68,20 @@ def cargar_datos_optimizado(file_hash, file_name, _file_content, es_url=False):
             resp = requests.get(url)
             resp.raise_for_status()
             
-            # Inferir nombre
             nombre = "data_onedrive.xlsx"
-            if ".csv" in url.lower(): nombre = "data_onedrive.csv"
+            if ".csv" in url.lower():
+                nombre = "data_onedrive.csv"
             
             archivo_final = FileLike(resp.content, nombre)
-        else:
-            # Reconstruir FileLike desde bytes
-            archivo_final = FileLike(_file_content, file_name)
 
-        # Usamos la función load_data de tu utils.py
         df = utils.load_data(archivo_final)
+        
         if df is None:
             return pd.DataFrame()
         return df
 
     except Exception as e:
         st.error(f"Error crítico al cargar datos: {e}")
-        import traceback
-        st.code(traceback.format_exc())
         return pd.DataFrame()
 
 # Funciones de cálculo rápido para los Tabs
@@ -150,15 +143,7 @@ with st.sidebar:
     # Prioridad: Archivo subido > Link
     if uploaded_file:
         # Leer en memoria
-        bytes_data = uploaded_file.getvalue()
-        
-        # Calcular hash MD5 rápido para usar como key de caché
-        # Esto evita que Streamlit tenga que hashear todo el archivo grande en cada rerun
-        file_hash = hashlib.md5(bytes_data).hexdigest()
-        
-        # Pasamos hash, nombre y el contenido (con _ para que st.cache_data lo ignore si se configurara así, 
-        # pero aquí lo importante es que el hash cambia si el archivo cambia)
-        df_base = cargar_datos_optimizado(file_hash, uploaded_file.name, bytes_data, es_url=False)
+        df_base = cargar_datos_optimizado(uploaded_file, es_url=False)
             
     elif onedrive_url:
         try:
