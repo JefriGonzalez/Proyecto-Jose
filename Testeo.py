@@ -8,11 +8,11 @@ if current_dir not in sys.path:
     sys.path.append(current_dir)
 
 # Auto-run block removed to prevent conflicts
-# if __name__ == "__main__":
-#     if not os.environ.get("STREAMLIT_RUNNING_IN_SUBPROCESS"):
-#         os.environ["STREAMLIT_RUNNING_IN_SUBPROCESS"] = "true"
-#         sys.argv = ["streamlit", "run", sys.argv[0], "--server.port", "8501"]
-#         sys.exit(stcli.main())
+if __name__ == "__main__":
+    if not os.environ.get("STREAMLIT_RUNNING_IN_SUBPROCESS"):
+        os.environ["STREAMLIT_RUNNING_IN_SUBPROCESS"] = "true"
+        sys.argv = ["streamlit", "run", sys.argv[0], "--server.port", "8501"]
+        sys.exit(stcli.main())
 
 import streamlit as st
 import pandas as pd
@@ -239,6 +239,8 @@ with tab1:
     st.markdown("## 🔎 Gestión Detallada por Coordinadora")
     
     # --- LÓGICA DE CASCADA ---
+    st.markdown(styles.card_start(), unsafe_allow_html=True)
+    st.markdown("### 🔍 Filtros")
     # Paso 1: Año y Mes
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -248,56 +250,47 @@ with tab1:
         df_1 = df_base[df_base["DIAS/FECHAS"].dt.year.isin(sel_year)] if sel_year else df_base
 
     with c2:
-        # Filtro Mes (Nuevo)
-        if "Mes" in df_1.columns:
-            meses_disp = sorted(df_1["Mes"].unique(), key=lambda x: list(utils.MESES_NOMBRE.values()).index(x) if x in utils.MESES_NOMBRE.values() else 99)
-            sel_mes = st.multiselect("2. Mes", meses_disp, key="t1_mes", placeholder="Todos")
-            df_2 = df_1[df_1["Mes"].isin(sel_mes)] if sel_mes else df_1
-        else:
-            df_2 = df_1
-
-    # Paso 2: Sede
+        meses_disp = sorted(df_1["Mes"].unique(), key=lambda x: utils.MESES.get(x.lower(), 99)) if "Mes" in df_1.columns else []
+        sel_mes = st.multiselect("2. Mes", meses_disp, key="t1_mes", placeholder="Todos")
+        df_2 = df_1[df_1["Mes"].isin(sel_mes)] if sel_mes else df_1
+        
     with c3:
-        sedes_disp = sorted(df_2["SEDE"].unique())
-        sel_sede = st.multiselect("3. Sede", sedes_disp, key="t1_sede", placeholder="Todas")
-        # Filtro
-        df_3 = df_2[df_2["SEDE"].isin(sel_sede)] if sel_sede else df_2
-
-    # Paso 3: Modalidad
+        coords_disp = sorted(df_2["COORDINADORA RESPONSABLE"].unique())
+        sel_coord = st.multiselect("3. Coordinadora", coords_disp, key="t1_coord", placeholder="Todas")
+        df_3 = df_2[df_2["COORDINADORA RESPONSABLE"].isin(sel_coord)] if sel_coord else df_2
+        
     with c4:
-        mods_disp = sorted(df_3["Modalidad_Calc"].unique())
-        sel_mod = st.multiselect("4. Modalidad", mods_disp, key="t1_mod", placeholder="Todas")
-        # Filtro
-        df_4 = df_3[df_3["Modalidad_Calc"].isin(sel_mod)] if sel_mod else df_3
+        progs_disp = sorted(df_3["PROGRAMA"].unique())
+        sel_prog = st.multiselect("4. Programa", progs_disp, key="t1_prog", placeholder="Todos")
+        df_4 = df_3[df_3["PROGRAMA"].isin(sel_prog)] if sel_prog else df_3
+    
+    st.markdown(styles.card_end(), unsafe_allow_html=True)
 
     # Segunda fila de filtros
     c5, c6, c7, c8 = st.columns(4)
     
-    # Paso 4: Coordinadora
+    # Paso 5: Sede
     with c5:
-        coords_disp = sorted(df_4["COORDINADORA RESPONSABLE"].unique())
-        sel_coord = st.multiselect("5. Coordinadora", coords_disp, key="t1_coord", placeholder="Todas")
-        # Filtro
-        df_5 = df_4[df_4["COORDINADORA RESPONSABLE"].isin(sel_coord)] if sel_coord else df_4
+        sedes_disp = sorted(df_4["SEDE"].unique())
+        sel_sede = st.multiselect("5. Sede", sedes_disp, key="t1_sede", placeholder="Todas")
+        df_5 = df_4[df_4["SEDE"].isin(sel_sede)] if sel_sede else df_4
 
-    # Paso 5: Programa
+    # Paso 6: Modalidad
     with c6:
-        progs_disp = sorted(df_5["PROGRAMA"].unique())
-        sel_prog = st.multiselect("6. Programa", progs_disp, key="t1_prog", placeholder="Todos")
-        # Filtro
-        df_6 = df_5[df_5["PROGRAMA"].isin(sel_prog)] if sel_prog else df_5
+        mods_disp = sorted(df_5["Modalidad_Calc"].unique())
+        sel_mod = st.multiselect("6. Modalidad", mods_disp, key="t1_mod", placeholder="Todas")
+        df_6 = df_5[df_5["Modalidad_Calc"].isin(sel_mod)] if sel_mod else df_5
 
-    # Paso 6: Profesor (Nuevo)
+    # Paso 7: Profesor
     with c7:
         if "PROFESOR" in df_6.columns:
-            # Asegurar que sean strings y eliminar nulos para evitar error de ordenamiento
             profs_disp = sorted(df_6["PROFESOR"].dropna().astype(str).unique())
             sel_prof = st.multiselect("7. Profesor", profs_disp, key="t1_prof", placeholder="Todos")
             df_7 = df_6[df_6["PROFESOR"].isin(sel_prof)] if sel_prof else df_6
         else:
             df_7 = df_6
 
-    # Paso 7: Día Semana
+    # Paso 8: Día Semana
     with c8:
         dias_orden = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
         dias_disp = sorted(df_7["Dia_Semana"].unique(), key=lambda x: dias_orden.index(x) if x in dias_orden else 99)
@@ -323,15 +316,18 @@ with tab1:
         
         dias_criticos = carga_diaria[carga_diaria["N_Progs"] > 2]
 
+        st.markdown(styles.card_start(), unsafe_allow_html=True)
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Sesiones", total_sesiones)
         k2.metric("Programas", total_progs)
         k3.metric("Días Activos", df_final_t1["DIAS/FECHAS"].nunique())
         k4.metric("Días Críticos (>2 Prog)", len(dias_criticos), delta_color="inverse")
+        st.markdown(styles.card_end(), unsafe_allow_html=True)
 
         # Gráfico y Tabla de Críticos
         # col_g, col_t = st.columns([2, 1])  <-- Removed column layout
         
+        st.markdown(styles.card_start(), unsafe_allow_html=True)
         # Gráfico (Arriba)
         df_plot = carga_diaria.copy()
         df_plot["Fecha"] = df_plot["DIAS/FECHAS"].dt.strftime("%d-%m-%Y")
@@ -342,7 +338,8 @@ with tab1:
         fig_d = px.bar(
             df_plot, x="Fecha", y="N_Progs", color=color_by,
             title="Intensidad de Programas por Día",
-            labels={"N_Progs": "Cant. Programas"}
+            labels={"N_Progs": "Nº Programas", "Fecha": "Fecha"},
+            text="N_Progs"
         )
         fig_d.add_hline(y=2, line_dash="dot", annotation_text="Límite Ideal (2)")
         st.plotly_chart(charts.update_chart_layout(fig_d), use_container_width=True)
@@ -365,6 +362,7 @@ with tab1:
             )
         else:
             st.success("¡Excelente! No hay días con sobrecarga (>2 programas) en esta selección.")
+        st.markdown(styles.card_end(), unsafe_allow_html=True)
 
     # =============================================================================
     # TABLA DETALLADA
@@ -401,7 +399,7 @@ with tab2:
     sel_m2 = c2_3.multiselect("Modalidad", sorted(df_base["Modalidad_Calc"].unique()), key="t2_m", placeholder="Todas")
     
     # Nuevo filtro de Mes
-    meses_disp_t2 = sorted(df_base["Mes"].unique()) if "Mes" in df_base.columns else []
+    meses_disp_t2 = sorted(df_base["Mes"].unique(), key=lambda x: utils.MESES.get(x.lower(), 99)) if "Mes" in df_base.columns else []
     sel_mes2 = c2_4.multiselect("Mes", meses_disp_t2, key="t2_mes", placeholder="Todos")
 
     # Aplicar filtros
@@ -437,22 +435,8 @@ with tab2:
                 title="Distribución por Día Semana (Comparativa)"
             )
             
-            # Cálculo de ancho dinámico para el scroll
-            n_coords = dist_dia["COORDINADORA RESPONSABLE"].nunique()
-            # Estimamos 150px por coordinadora (ajustable)
-            ancho_grafico = max(600, n_coords * 150) 
-            
-            fig_p.update_layout(width=ancho_grafico)
-
-            # Contenedor con scroll horizontal
-            st.markdown(f"""
-            <div style="overflow-x: auto; padding-bottom: 20px;">
-                <div style="width: {ancho_grafico}px;">
-            """, unsafe_allow_html=True)
-            
-            st.plotly_chart(charts.update_chart_layout(fig_p), use_container_width=False)
-            
-            st.markdown("</div></div>", unsafe_allow_html=True)
+            # Gráfico sin contenedor de scroll para asegurar alineación
+            st.plotly_chart(charts.update_chart_layout(fig_p), use_container_width=True)
 
         # Resumen Tabla
         st.markdown("### Resumen de Actividad")
@@ -502,7 +486,9 @@ with tab3:
     c_heat_1, c_heat_2, c_heat_3, c_heat_4, c_heat_5 = st.columns(5)
     
     # Filtro Mes
-    meses_disp = sorted(df_t3["DIAS/FECHAS"].dt.month_name().unique())
+    # Usamos map con MESES_NOMBRE para asegurar nombres en español consistentes
+    meses_nombres = df_t3["DIAS/FECHAS"].dt.month.map(utils.MESES_NOMBRE).unique()
+    meses_disp = sorted(meses_nombres, key=lambda x: utils.MESES.get(utils.quitar_acentos(str(x)).lower(), 99))
     sel_mes_heat = c_heat_1.multiselect("Filtrar Mes", meses_disp, key="t3_heat_mes", placeholder="Todos")
     
     # Filtro Día Semana
@@ -575,6 +561,7 @@ with tab4:
             Inicio=("DIAS/FECHAS", "min"),
             Fin=("DIAS/FECHAS", "max"),
             Sesiones=("DIAS/FECHAS", "count"),
+            Sum_Horas=("Duracion_Horas", "sum"),
             Coords=("COORDINADORA RESPONSABLE", lambda x: ", ".join(sorted(x.unique())))
         ).reset_index()
 
@@ -597,7 +584,8 @@ with tab4:
                 ),
                 "Inicio": st.column_config.DateColumn("Inicio", format="DD/MM/YYYY"),
                 "Fin": st.column_config.DateColumn("Fin", format="DD/MM/YYYY"),
-                "Sesiones": st.column_config.NumberColumn("Nº Clases")
+                "Sesiones": st.column_config.NumberColumn("Nº Clases"),
+                "Sum_Horas": st.column_config.NumberColumn("Total Horas", format="%.1f hrs")
             },
             hide_index=True,
             use_container_width=True
@@ -1037,9 +1025,11 @@ with tab_gestion:
                     fig_rad = px.line_polar(
                         conteo_dias, r='Clases', theta='Dia', 
                         title="<b>Por Día Semana</b>", 
-                        **radar_style
+                        line_close=True,
+                        color_discrete_sequence=["black"],
+                        markers=True # Enable markers for hover
                     )
-                    fig_rad.update_traces(fill='toself', opacity=0.4, line=dict(width=3))
+                    fig_rad.update_traces(fill='toself', line=dict(color='black', width=3))
                     st.plotly_chart(charts.update_chart_layout(fig_rad), use_container_width=True)
 
                 # 2. Gráfico Sede
@@ -1050,9 +1040,11 @@ with tab_gestion:
                     fig_sede = px.line_polar(
                         conteo_sede, r='Clases', theta='Sede', 
                         title="<b>Por Sede</b>", 
-                        **radar_style
+                        line_close=True,
+                        color_discrete_sequence=["black"],
+                        markers=True # Enable markers for hover
                     )
-                    fig_sede.update_traces(fill='toself', opacity=0.4, line=dict(width=3))
+                    fig_sede.update_traces(fill='toself', line=dict(color='black', width=3))
                     st.plotly_chart(charts.update_chart_layout(fig_sede), use_container_width=True)
 
                 # 3. Gráfico Modalidad
@@ -1063,9 +1055,11 @@ with tab_gestion:
                     fig_mod = px.line_polar(
                         conteo_mod, r='Clases', theta='Modalidad', 
                         title="<b>Por Modalidad</b>", 
-                        **radar_style
+                        line_close=True,
+                        color_discrete_sequence=["black"],
+                        markers=True # Enable markers for hover
                     )
-                    fig_mod.update_traces(fill='toself', opacity=0.4, line=dict(width=3))
+                    fig_mod.update_traces(fill='toself', line=dict(color='black', width=3))
                     st.plotly_chart(charts.update_chart_layout(fig_mod), use_container_width=True)
 
                 # Detalle Dinámico por Día
@@ -1220,4 +1214,4 @@ with tab_validaciones:
     else:
         st.info("No se encontró información de Sede o Coordinadora para realizar esta validación.")
 
-# (Auto-run block removed
+# (Auto-run block removed)
