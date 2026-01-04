@@ -1,0 +1,611 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+
+# Configuración de la página
+st.set_page_config(page_title="Tablero de Gestión Académica", layout="wide", page_icon="🎓")
+# Aumentar límite de celdas para estilos en dataframes grandes
+pd.set_option("styler.render.max_elements", 3000000)
+
+# --- 1. FUNCIÓN DE CARGA DE DATOS ---
+# --- 1. FUNCIÓN DE CARGA DE DATOS ---
+# --- 1. FUNCIÓN DE CARGA DE DATOS ---
+@st.cache_data
+def cargar_datos(archivo, sheet_name=0):
+    # Lógica robusta de detección de encabezados (importada de Analisis.py)
+    try:
+        # 1. Leer primeras filas para detectar header
+        archivo.seek(0)
+        preview = pd.read_excel(archivo, sheet_name=sheet_name, header=None, nrows=20)
+        
+        keywords = ["RUT", "PROGRAMA", "NOMBRE", "ESTADO", "SIGLA", "NOTA", "CALIFICACION"]
+        header_row_idx = 0
+        max_hits = -1
+        
+        for i, row in preview.iterrows():
+            row_str = [str(x).strip().upper() for x in row.values]
+            
+            # Skip filas que parecen filtros
+            if any(x in ["(TODAS)", "(TODOS)"] for x in row_str):
+                continue
+                
+            hits = sum(1 for k in keywords if any(k in s for s in row_str))
+            
+            # Priorizar filas con más aciertos
+            if hits > max_hits and hits >= 1:
+                max_hits = hits
+                header_row_idx = i
+        
+        # 2. Cargar con el header correcto
+        archivo.seek(0)
+        df = pd.read_excel(archivo, sheet_name=sheet_name, header=header_row_idx)
+        
+    except Exception as e:
+        # Fallback a lectura simple (CSV o Excel directo)
+        archivo.seek(0)
+        try:
+            df = pd.read_excel(archivo, sheet_name=sheet_name)
+        except:
+            archivo.seek(0)
+            df = pd.read_csv(archivo)
+    
+    # Normalización de nombres de columnas (upper + strip)
+    df.columns = df.columns.astype(str).str.strip().str.upper()
+
+    # Limpieza básica
+    if 'RUT' in df.columns:
+        df['RUT'] = df['RUT'].astype(str).str.strip()
+    else:
+        # Búsqueda difusa de RUT
+        col_rut = next((c for c in df.columns if "RUT" in c), None)
+        if col_rut:
+            df = df.rename(columns={col_rut: 'RUT'})
+            df['RUT'] = df['RUT'].astype(str).str.strip()
+        else:
+            st.error("❌ No se encontró la columna RUT en el archivo. Verifica el formato.")
+            return pd.DataFrame()
+
+    # Búsqueda robusta de PROGRAMA
+    if 'PROGRAMA' not in df.columns:
+        col_prog = next((c for c in df.columns if "PROGRAMA" in c or "CARRERA" in c), None)
+        if col_prog:
+            df = df.rename(columns={col_prog: 'PROGRAMA'})
+        else:
+            # Fallback crítico: Crear columna dummy para no romper la app, pero avisar
+            st.warning("⚠️ No se encontró columna 'PROGRAMA'. Se usará 'GENERAL' por defecto.")
+            df['PROGRAMA'] = "GENERAL"
+
+    cols_identidad = ['RUT', 'A. PATERNO', 'A. MATERNO', 'NOMBRE', 'PROGRAMA']
+    
+    # Asegurar que existan las columnas (ajuste robusto)
+    for c in cols_identidad:
+        if c in df.columns:
+            df[c] = df[c].ffill()
+
+    # --- CREACIÓN DE NOMBRE COMPLETO ---
+    # Intenta concatenar NOMBRE + A. PATERNO + A. MATERNO si existen
+    if 'NOMBRE' in df.columns:
+        df['NOMBRE_COMPLETO'] = df['NOMBRE'].astype(str).str.strip()
+        
+        # Buscar columnas de apellidos de forma flexible
+        col_paterno = next((c for c in df.columns if "PATERNO" in c), None)
+        col_materno = next((c for c in df.columns if "MATERNO" in c), None)
+        
+        if col_paterno:
+            df['NOMBRE_COMPLETO'] += " " + df[col_paterno].astype(str).str.strip()
+        if col_materno:
+            df['NOMBRE_COMPLETO'] += " " + df[col_materno].astype(str).str.strip()
+            
+        df['NOMBRE_COMPLETO'] = df['NOMBRE_COMPLETO'].str.title()
+    else:
+        # Fallback si no hay columna NOMBRE explícita
+        col_nombre_alt = next((c for c in df.columns if "ALUMNO" in c or "NOMBRE" in c), None)
+        if col_nombre_alt:
+            df['NOMBRE_COMPLETO'] = df[col_nombre_alt].astype(str).str.strip().str.title()
+        else:
+            df['NOMBRE_COMPLETO'] = "Estudiante Desconocido"
+
+    # --- OPTIMIZACIÓN BUSCADOR (Pre-cálculo) ---
+    # Creamos columnas limpias y label único aquí para evitar recalculo en cada interacción
+    df['RUT_CLEAN'] = df['RUT'].astype(str).str.strip()
+    # Filtro básico de basura
+    df = df[df['RUT_CLEAN'].str.len() > 3] # RUTs muy cortos suelen ser basura
+    
+    # Crear SEARCH_LABEL único
+    df['SEARCH_LABEL'] = df['RUT_CLEAN'] + " - " + df['NOMBRE_COMPLETO']
+    
+    return df
+
+# --- 2. INTERFAZ PRINCIPAL ---
+st.title("📊 Tablero de Control: ADN Académico")
+st.markdown("Sistema de seguimiento curricular y detección temprana de riesgo.")
+
+# Carga de Archivo (Sidebar)
+st.sidebar.header("📂 Configuración")
+archivo_cargado = st.sidebar.file_uploader("Cargar Reporte de Notas", type=["csv", "xlsx"])
+
+if archivo_cargado:
+    # Selector de hoja si es Excel
+    sheet_name = 0
+    if archivo_cargado.name.endswith(('.xlsx', '.xls')):
+        try:
+            xl = pd.ExcelFile(archivo_cargado)
+            sheet_names = xl.sheet_names
+            if len(sheet_names) > 1:
+                sheet_name = st.sidebar.selectbox("Seleccionar Pestaña/Hoja:", sheet_names)
+            else:
+                sheet_name = sheet_names[0]
+            # Reset pointer
+            archivo_cargado.seek(0)
+        except:
+            pass
+
+    df = cargar_datos(archivo_cargado, sheet_name)
+    
+    if df.empty:
+        st.warning("⚠️ No se pudieron cargar datos válidos. Revisa el archivo.")
+        st.stop()
+    
+    if df.empty:
+        st.warning("⚠️ No se pudieron cargar datos válidos. Revisa el archivo.")
+        st.stop()
+
+    # --- LAYOUT: KPIs (Contenedor superior) ---
+    c_kpis = st.container()
+
+    # --- FILTROS (BAJO LOS KPIs/GRÁFICO) ---
+    st.divider()
+    c_f1, c_f2, c_f3, c_f4 = st.columns(4)
+    
+    # 1. Filtro Programa
+    programas = sorted(df['PROGRAMA'].dropna().unique())
+    with c_f1:
+        programa_selec = st.selectbox("Seleccionar Programa:", ["(Todos)"] + programas)
+    
+    # Lógica de filtrado base
+    if programa_selec == "(Todos)":
+        df_filtered = df.copy()
+    else:
+        df_filtered = df[df['PROGRAMA'] == programa_selec].copy()
+
+    # 2. Filtro Cohorte
+    col_cohorte = next((c for c in df.columns if "COHORTE" in c), None)
+    if col_cohorte:
+        cohortes = sorted(df_filtered[col_cohorte].astype(str).unique())
+        with c_f2:
+            cohorte_selec = st.selectbox("Seleccionar Cohorte:", ["(Todas)"] + list(cohortes))
+        
+        if cohorte_selec != "(Todas)":
+            df_filtered = df_filtered[df_filtered[col_cohorte].astype(str) == cohorte_selec]
+    else:
+        with c_f2:
+            st.info("No 'COHORTE'")
+
+    # 3. Filtro Estado Expediente
+    col_expediente = next((c for c in df.columns if any(x in c for x in ["EXPEDIENTE", "ESTADO ALUMNO"])), None)
+    if col_expediente:
+        estados_exp = sorted(df_filtered[col_expediente].dropna().astype(str).unique())
+        with c_f3:
+            estado_exp_selec = st.selectbox("Estado Expediente:", ["(Todos)"] + list(estados_exp))
+        
+        if estado_exp_selec != "(Todos)":
+            df_filtered = df_filtered[df_filtered[col_expediente].astype(str) == estado_exp_selec]
+    else:
+        with c_f3:
+            st.info("No 'EXPEDIENTE'")
+
+    # 4. Filtro Estado Inactivo (o Vigencia)
+    col_inactivo = next((c for c in df.columns if any(x in c for x in ["INACTIVO", "VIGENCIA"])), None)
+    if col_inactivo:
+        estados_inact = sorted(df_filtered[col_inactivo].dropna().astype(str).unique())
+        with c_f4:
+            inactivo_selec = st.selectbox("Estado Inactivo:", ["(Todos)"] + list(estados_inact))
+            
+        if inactivo_selec != "(Todos)":
+             df_filtered = df_filtered[df_filtered[col_inactivo].astype(str) == inactivo_selec]
+    else:
+        with c_f4:
+             st.info("No 'INACTIVO'")
+
+    # Alias para compatibilidad con el resto del script
+    df_prog = df_filtered
+
+    # --- CÁLCULO DE KPIs (CON DATA FILTRADA) ---
+    # Calcular promedio por alumno (SOLO NOTAS > 0, es decir asignaturas cursadas)
+    # Filtramos notas 0 (pendientes/inscritos) para estadísticas
+    df_notas_validas = df_filtered[df_filtered['NOTA'] > 0]
+    
+    # Si un alumno tiene puras notas 0, no aparecerá acá, así que luego hacemos merge con la lista completa
+    stats_alumno = df_notas_validas.groupby(['RUT', 'NOMBRE_COMPLETO'])['NOTA'].mean().reset_index()
+    stats_alumno.columns = ['RUT', 'NOMBRE_COMPLETO', 'PROMEDIO_GLOBAL']
+    
+    # Obtener lista completa de alumnos únicos en la selección
+    todos_alumnos = df_filtered[['RUT', 'NOMBRE_COMPLETO']].drop_duplicates()
+    
+    # Merge para incluir a los que no tienen notas (quedarán con NaN)
+    stats_alumno = pd.merge(todos_alumnos, stats_alumno, on=['RUT', 'NOMBRE_COMPLETO'], how='left')
+    
+    # Llenamos NaN con 0.0 o lo dejamos asi. 
+    # Para efectos de "Riesgo<4.0", si tiene nan (no ha cursado nada), ¿es riesgo?
+    # Asumiremos riesgo si Promedio es NaN o menor a 4.0 (OJO: 0.0 es < 4.0)
+    stats_alumno['PROMEDIO_GLOBAL'] = stats_alumno['PROMEDIO_GLOBAL'].fillna(0.0)
+    
+    total_alumnos = len(stats_alumno)
+    alumnos_riesgo = stats_alumno[stats_alumno['PROMEDIO_GLOBAL'] < 4.0]
+    num_riesgo = len(alumnos_riesgo)
+    porcentaje_riesgo = (num_riesgo / total_alumnos) * 100 if total_alumnos > 0 else 0
+    
+    # --- RENDERIZAR KPIs EN EL CONTENEDOR SUPERIOR ---
+    with c_kpis:
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Total Estudiantes", total_alumnos)
+        k2.metric("En Riesgo (Prom < 4.0)", num_riesgo, delta_color="inverse")
+        k3.metric("% Tasa de Riesgo", f"{porcentaje_riesgo:.1f}%")
+
+
+    # --- 4. PESTAÑAS DE GESTIÓN ---
+    tab1, tab2, tab3 = st.tabs(["🧬 ADN Académico (Mapa)", "🚨 Alumnos en Riesgo", "🔍 Ficha por Alumno"])
+
+    with tab1:
+        st.subheader(f"Mapa de Calor: {programa_selec}")
+        st.info("Este mapa muestra el rendimiento consolidado. Pasa el mouse para ver detalles.")
+        
+        # Preparar datos para Plotly (Interactivo)
+        # Filtramos columnas que NO son de identidad para obtener las materias
+        cols_materias = [c for c in df_prog.columns if c not in ['RUT', 'A. PATERNO', 'A. MATERNO', 'NOMBRE', 'PROGRAMA', 'ESTADO NODO', 'SIGLA NODO', 'MÁX. de NOTA'] and not c.startswith('Unnamed')]
+        
+        # Como la estructura original es vertical, hacemos pivot
+        # Identificamos columnas de materias dinámicamente si están en formato ancho o usamos SIGLA NODO si es largo
+        if 'SIGLA NODO' in df_prog.columns:
+            # --- LÓGICA 'P' PARA PENDIENTES ---
+            
+            # 1. Buscar columna de Estado robustamente
+            cols_estado = [c for c in df_prog.columns if any(x in c for x in ['ESTADO', 'SITUACION'])]
+            col_estado = 'ESTADO NODO' # Default
+            if 'ESTADO NODO' in df_prog.columns:
+                col_estado = 'ESTADO NODO'
+            elif cols_estado:
+                col_estado = cols_estado[0]
+            
+            # Crear columna de visualización mixta (Números y letras)
+            def aplicar_regla_p(row):
+                try:
+                    nota = float(row['NOTA'])
+                    # Obtenemos estado usando la columna detectada
+                    estado = str(row.get(col_estado, '')).upper()
+                    
+                    # Si nota es 0 y estado es pendiente/inscrito -> 'P'
+                    keywords_p = ['PENDIENTE', 'INSCRITO', 'CURSANDO', 'EN CURSO']
+                    if nota == 0 and any(x in estado for x in keywords_p):
+                        return 'P'
+                    return nota
+                except:
+                    return row['NOTA']
+
+            # Aplicamos la regla row-wise
+            df_prog['VALOR_TABLA'] = df_prog.apply(aplicar_regla_p, axis=1)
+            
+            # Pivotamos usando esta nueva columna
+            # Matriz Numérica para Heatmap (P -> 0 para que se pinte rojo/neutro o excluimos)
+            pivot_adn = df_prog.pivot_table(index='RUT', columns='SIGLA NODO', values='NOTA', aggfunc='max')
+            
+            # Matriz Visual para Tabla (Con 'P')
+            # Usamos lambda robusta: convertimos a string para comparar, 'P' > '0.0'
+            pivot_detalle = df_prog.pivot_table(
+                index='RUT', 
+                columns='SIGLA NODO', 
+                values='VALOR_TABLA', 
+                aggfunc=lambda x: sorted([str(v) for v in x])[-1] if len(x) > 0 else np.nan
+            )
+            
+        else:
+            # Asumiendo que las columnas ya son materias
+            pivot_adn = df_prog.set_index('RUT')[cols_materias]
+            pivot_detalle = pivot_adn.copy()
+
+        # Ordenar por riesgo (promedio)
+        # Usamos la numérica para el orden
+        pivot_adn['Promedio'] = pivot_adn.mean(axis=1)
+        pivot_adn = pivot_adn.sort_values('Promedio')
+        pivot_adn = pivot_adn.drop(columns='Promedio') 
+        
+        # Sincronizar orden en pivot_detalle
+        pivot_detalle = pivot_detalle.reindex(pivot_adn.index)
+
+        # Límite de visualización para Heatmap (Evitar colapso)
+        HEATMAP_LIMIT = 400
+        if len(pivot_adn) > HEATMAP_LIMIT:
+             st.warning(f"⚠️ El mapa de calor muestra solo los primeros {HEATMAP_LIMIT} estudiantes por rendimiento. Use los filtros para ver detalles específicos.")
+             pivot_plot = pivot_adn.head(HEATMAP_LIMIT)
+        else:
+             pivot_plot = pivot_adn
+
+        # Gráfico Interactivo (Usa pivot_plot limitado)
+        fig = px.imshow(pivot_plot, 
+                        labels=dict(x="Asignaturas", y="Estudiantes", color="Nota"),
+                        x=pivot_plot.columns,
+                        y=pivot_plot.index,
+                        color_continuous_scale='RdYlGn',
+                        range_color=[1.0, 7.0],
+                        aspect="auto")
+        
+        # Ocultar etiquetas del eje Y (RUTs) como pidió el usuario
+        fig.update_yaxes(showticklabels=False)
+        fig.update_layout(height=600)
+        st.plotly_chart(fig, use_container_width=True)
+
+        # --- NUEVO ANÁLISIS: RENDIMIENTO Y ESTADOS ---
+        st.divider()
+        st.subheader("📊 Análisis de Rendimiento y Situación Académica")
+        
+        c_box, c_pie = st.columns([2, 1])
+        
+        with c_box:
+            st.info("Distribución de notas por materia.")
+            # Boxplot ordenado
+            fig_box = px.box(df_filtered, x='SIGLA NODO', y='NOTA', 
+                             color='SIGLA NODO', 
+                             title=f"Distribución de Notas: {programa_selec}")
+            fig_box.update_layout(showlegend=False)
+            st.plotly_chart(fig_box, use_container_width=True)
+            
+        with c_pie:
+            st.info("Estado de Asignaturas (Registros)")
+            # 1. Detectar Columna Estado (Específica primero)
+            possible_names = ["ESTADO NODO", "ESTADO DEL NODO", "SITUACION NODO", "SITUACION"]
+            col_target_estado = None
+            
+            # Busqueda exacta
+            for name in possible_names:
+                if name in df_filtered.columns:
+                    col_target_estado = name
+                    break
+            
+            # Busqueda difusa si falla
+            if not col_target_estado:
+                cols_estado = [c for c in df_filtered.columns if any(x in c for x in ['ESTADO', 'SITUACION'])]
+                col_target_estado = cols_estado[0] if cols_estado else None
+            
+            if col_target_estado:
+                # 2. Categorizar
+                def categorizar_estado(val):
+                    s = str(val).upper().strip()
+                    if any(x in s for x in ['APROBADO', 'CONVALIDADO', 'HOMOLOGADO', 'CUMPLIDO', 'SOBREPASADO']):
+                        return 'Aprobada'
+                    elif any(x in s for x in ['REPROBADO', 'NCR', 'F', 'NO CUMPLE']):
+                        return 'Reprobada'
+                    elif any(x in s for x in ['PENDIENTE', 'INSCRITO', 'CURSANDO', 'EN CURSO', 'VIGENTE']):
+                        return 'Pendiente'
+                    # Retornamos el valor original (Title Case) si no calza, para ver qué es
+                    return str(val).title()
+                
+                df_pie = df_filtered.copy()
+                df_pie['Estado_Simplificado'] = df_pie[col_target_estado].apply(categorizar_estado)
+                
+                # 3. Graficar Pie
+                conteo_estados = df_pie['Estado_Simplificado'].value_counts().reset_index()
+                conteo_estados.columns = ['Estado', 'Cantidad']
+                
+                # Colores personalizados (Extendidos)
+                color_map = {
+                    'Aprobada': '#28a745',  # Verde
+                    'Reprobada': '#dc3545', # Rojo
+                    'Pendiente': '#ffc107', # Amarillo
+                }
+                
+                fig_pie = px.pie(conteo_estados, values='Cantidad', names='Estado', 
+                                 color='Estado',
+                                 color_discrete_map=color_map,
+                                 title=f"Distribución: {col_target_estado}")
+                st.plotly_chart(fig_pie, use_container_width=True)
+            else:
+                st.warning("No se detectó columna 'ESTADO NODO' o similar.")
+
+        st.divider()
+        st.subheader("📋 Detalle Matriz de Notas")
+        
+        # Límite de visualización para evitar "Page Unresponsive"
+        DISPLAY_LIMIT = 100
+        
+        if len(pivot_detalle) > DISPLAY_LIMIT:
+            st.warning(f"⚠️ Se muestran los primeros {DISPLAY_LIMIT} estudiantes para optimizar rendimiento. Descargue el Excel para ver la matriz completa ({len(pivot_detalle)} filas).")
+            display_df = pivot_detalle.head(DISPLAY_LIMIT)
+        else:
+            display_df = pivot_detalle
+
+        # Estilos similares a Analisis.py
+        def highlight_grades(val):
+            try:
+                s_val = str(val).strip()
+                if s_val == 'P':
+                    return 'background-color: #fff3cd; color: #856404; font-weight: bold;' # Amarillo Oscuro
+                
+                num = float(s_val.replace(",", "."))
+                if num < 4.0:
+                     return 'background-color: #ffcccc; color: #990000; font-weight: bold;'
+                else:
+                     return 'background-color: #ccffcc; color: #006600; font-weight: bold;'
+            except:
+                return ''
+
+        # Usamos pivot_detalle y formateamos con cuidado (si es P no aplica float format)
+        st.dataframe(display_df.style.map(highlight_grades), use_container_width=True)
+        
+        # Botón para descargar la matriz exacta (COMPLETA)
+        from io import BytesIO
+        bio = BytesIO()
+        with pd.ExcelWriter(bio, engine="openpyxl") as writer:
+            pivot_adn.to_excel(writer, sheet_name="Matriz_ADN")
+        bio.seek(0)
+        
+        st.download_button(
+            label="📥 Descargar Matriz Completa (Excel)",
+            data=bio,
+            file_name=f'Matriz_Notas_{programa_selec}.xlsx',
+            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+
+    with tab2:
+        st.subheader("Gestión de Alumnos Críticos")
+        st.warning(f"Se han detectado {num_riesgo} alumnos con rendimiento general insuficiente.")
+        
+        # Tabla interactiva
+        st.dataframe(alumnos_riesgo.sort_values('PROMEDIO_GLOBAL'), use_container_width=True)
+        
+        # Botón de descarga
+        csv = alumnos_riesgo.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Descargar Reporte de Riesgo (CSV)",
+            data=csv,
+            file_name='reporte_riesgo.csv',
+            mime='text/csv',
+        )
+
+    with tab3:
+        st.subheader("🔍 Buscador de Estudiante")
+        
+        # 1. Obtener lista de alumnos (Optimizado: Usamos columna pre-calculada)
+        if 'SEARCH_LABEL' in df_prog.columns:
+            opciones_alumnos = sorted(df_prog['SEARCH_LABEL'].dropna().unique())
+        else:
+            # Fallback por si la cache antigua persiste 
+            st.warning("Actualizando cache de datos...")
+            st.cache_data.clear()
+            st.rerun()
+        
+        # 2. Widget de Selección
+        seleccion = st.selectbox("Seleccione Alumno:", opciones_alumnos, key="search_rut_selectbox")
+        
+        if seleccion:
+            # 3. Filtrar Dataframe por la etiqueta exacta
+            # Al usar la columna pre-calculada del mismo DF, el match es garantizado y rápido
+            df_alumno = df_prog[df_prog['SEARCH_LABEL'] == seleccion].copy()
+            
+            if not df_alumno.empty:
+                # Tomamos datos de identidad (usamos las columnas limpias)
+                rut_real = df_alumno['RUT_CLEAN'].iloc[0]
+                nombre_real = df_alumno['NOMBRE_COMPLETO'].iloc[0]
+                
+                # --- LÓGICA DE CÁLCULO DE PROMEDIO (SOLICITUD USUARIO) ---
+                # "Suma todas las notas aprobadas y reprobadas y saca el promedio final"
+                
+                # A. Detectar columna de Estado para filtrar
+                # Buscamos nombres comunes de columna de estado
+                cols_estado_candidatas = ["ESTADO NODO", "ESTADO DEL NODO", "SITUACION", "SITUACION NODO"]
+                col_estado = next((c for c in df_alumno.columns if c in cols_estado_candidatas), None)
+                
+                # Si no encuentra exacta, busca difusa
+                if not col_estado:
+                     col_estado = next((c for c in df_alumno.columns if "ESTADO" in c or "SITUACION" in c), None)
+
+                # B. limpiar y convertir NOTAS a float
+                def limpiar_nota(x):
+                    try:
+                        # Reemplazar coma por punto y convertir
+                        return float(str(x).replace(',', '.'))
+                    except:
+                        return 0.0
+
+                df_alumno['NOTA_VALOR'] = df_alumno['NOTA'].apply(limpiar_nota)
+                
+                # C. Filtrar para el cálculo "Realizado"
+                # Regla: Excluir lo que NO es Aprobado/Reprobado (es decir, excluir Pendientes/Inscritos)
+                # O alternativamente: Incluir solo notas > 0
+                
+                if col_estado:
+                    # Normalizamos texto estado
+                    df_alumno['ESTADO_NORM'] = df_alumno[col_estado].astype(str).str.upper()
+                    
+                    # Excluir estados 'PENDIENTE', 'INSCRITO', 'CONVALIDADO' del promedio
+                    # El usuario quiere promedio de lo "cursado" (aprobado + reprobado)
+                    mask_ignorar = df_alumno['ESTADO_NORM'].str.contains('PENDIENTE|INSCRITO|CURSANDO|CONVALIDADO|HOMOLOGADO', regex=True)
+                    df_calculo = df_alumno[~mask_ignorar]
+                else:
+                    # Si no hay estado, asumimos todo lo que tenga nota > 0
+                    df_calculo = df_alumno
+                
+                # Filtro final de nota > 0 (por si hay reprobados con nota 0 o vacía)
+                df_calculo = df_calculo[df_calculo['NOTA_VALOR'] > 0]
+                
+                # CÁLCULO FINAL (PROMEDIO SIMPLE)
+                if not df_calculo.empty:
+                    promedio_final = df_calculo['NOTA_VALOR'].mean()
+                else:
+                    promedio_final = 0.0
+
+                # --- NUEVA TABLA: PROMEDIO PONDERADO (SOLICITUD) ---
+                # Buscar columna de créditos
+                col_creditos = next((c for c in df_alumno.columns if "CREDITOS" in c or "SCT" in c or "CR" in c), None)
+                
+                resumen_data = {
+                    "Métrica": ["Promedio Simple (Notas > 0)"],
+                    "Valor": [f"{promedio_final:.2f}"]
+                }
+                
+                if col_creditos:
+                    # Normalizar créditos a numérico
+                    def limpiar_credito(x):
+                        try:
+                            val = float(str(x).replace(',', '.'))
+                            return val if val > 0 else 0.0
+                        except:
+                            return 0.0
+                    
+                    # Usamos el mismo df_calculo (ya filtrado por Realizados y Nota > 0)
+                    # Pero aseguramos que tenga la columna creditos limpia
+                    # Ojo: df_calculo es un slice/copia de df_alumno
+                    df_ponderado = df_calculo.copy()
+                    df_ponderado['CREDITOS_VALOR'] = df_alumno.loc[df_ponderado.index, col_creditos].apply(limpiar_credito)
+                    
+                    numerador = (df_ponderado['NOTA_VALOR'] * df_ponderado['CREDITOS_VALOR']).sum()
+                    denominador = df_ponderado['CREDITOS_VALOR'].sum()
+                    
+                    if denominador > 0:
+                        promedio_pond = numerador / denominador
+                        resumen_data["Métrica"].append("Promedio Ponderado")
+                        resumen_data["Valor"].append(f"{promedio_pond:.2f}")
+                    else:
+                         resumen_data["Métrica"].append("Promedio Ponderado")
+                         resumen_data["Valor"].append("N/A (Sin Créditos)")
+                else:
+                     # Si no hay columna creditos
+                     resumen_data["Métrica"].append("Promedio Ponderado")
+                     resumen_data["Valor"].append("N/A (Falta Columna Créditos)")
+
+                # Mostrar Tabla Resumen
+                df_resumen = pd.DataFrame(resumen_data)
+                st.markdown("### 📊 Resumen Académico")
+                st.dataframe(df_resumen, hide_index=True, use_container_width=True)
+
+                # --- VISUALIZACIÓN (SÓLO GRÁFICO) ---
+                # Gráfico de todas las notas (incluso pendientes si tienen nota) o solo cursadas?
+                # Mostramos TODO el historial para contexto, coloreando por nota
+                fig_tray = px.bar(df_alumno, x='SIGLA NODO', y='NOTA_VALOR',
+                                  color='NOTA_VALOR',
+                                  color_continuous_scale='RdYlGn',
+                                  range_color=[1, 7],
+                                  title="Trayectoria Académica Completa",
+                                  labels={'NOTA_VALOR': 'Nota', 'SIGLA NODO': 'Asignatura'})
+                
+                fig_tray.add_hline(y=4.0, line_dash="dash", line_color="red", annotation_text="Aprobación")
+                st.plotly_chart(fig_tray, use_container_width=True)
+                
+                st.divider()
+                st.subheader("📋 Detalle de Asignaturas")
+                
+                # Seleccionar columnas para mostrar
+                cols_display = ['SIGLA NODO', 'NOMBRE NODO', 'NOTA']
+                if col_estado:
+                    cols_display.append(col_estado)
+                
+                # Asegurar que existan
+                cols_display = [c for c in cols_display if c in df_alumno.columns]
+                
+                st.dataframe(df_alumno[cols_display].drop_duplicates(), use_container_width=True)
+            
+            else:
+                st.error("No se encontraron datos para el alumno seleccionado.")
+
+else:
+    st.info("👈 Por favor, carga tu archivo Excel o CSV en el menú lateral para comenzar.")
