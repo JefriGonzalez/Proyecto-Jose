@@ -1,8 +1,18 @@
+import sys
+import streamlit.web.cli as stcli
+from streamlit.runtime import exists
+
+if __name__ == "__main__":
+    if not exists():
+        sys.argv = ["streamlit", "run", __file__, "--server.port=8501", "--server.address=localhost"]
+        sys.exit(stcli.main())
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
 import re
+import calendar
 import io
 import requests
 
@@ -13,6 +23,8 @@ import requests
 import styles
 import charts
 import utils
+import importlib
+importlib.reload(utils)
 
 # -----------------------------------------------------------------------------
 # CONFIGURACIÓN DE PÁGINA
@@ -123,7 +135,9 @@ with st.sidebar:
     
     df_base = pd.DataFrame()
     if uploaded_file:
-        df_base = cargar_datos_optimizado(uploaded_file, es_url=False)
+        # Usar file_id o hash del contenido para cache
+        file_hash = uploaded_file.file_id 
+        df_base = utils.cargar_datos_optimizado(file_hash, uploaded_file.name, uploaded_file.getvalue(), es_url=False)
 
     st.markdown("---")
     
@@ -140,8 +154,13 @@ with st.sidebar:
         )
     
     st.markdown("---")
+    st.markdown("---")
     if st.button("🧹 Resetear Filtros"):
         utils.reset_filters()
+        st.rerun()
+
+    if st.button("🔄 Recargar Datos (Limpiar Caché)"):
+        st.cache_data.clear()
         st.rerun()
 
 # Detener si no hay datos
@@ -158,13 +177,14 @@ if "DIAS/FECHAS" not in df_base.columns:
 # -----------------------------------------------------------------------------
 # TABS PRINCIPALES
 # -----------------------------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5, tab_gestion, tab_validaciones = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab_gestion, tab_calendario, tab_validaciones = st.tabs([
     "👩‍💼 Coordinadoras", 
     "📊 Comparativa", 
     "🌐 Global", 
     "🧾 Resumen Programas", 
     "🏫 Calidad & Sede",
     "🔒 Gestión",
+    "📅 Calendario",
     "🕵️ Validaciones"
 ])
 
@@ -469,13 +489,28 @@ with tab3:
             (df_heat["DIAS/FECHAS"].dt.date <= sel_date_range[1])
         ]
     
-    choques = df_heat.groupby("DIAS/FECHAS")["COORDINADORA RESPONSABLE"].nunique().reset_index(name="N_Coords")
+    # Agregación mejorada para incluir nombres de coordinadoras
+    choques = df_heat.groupby("DIAS/FECHAS").agg(
+        N_Coords=("COORDINADORA RESPONSABLE", "nunique"),
+        Coordinadoras=("COORDINADORA RESPONSABLE", lambda x: ", ".join(sorted(x.unique())))
+    ).reset_index()
+    
     choques = choques[choques["N_Coords"] > 1]
     
     if not choques.empty:
         choques["Fecha"] = choques["DIAS/FECHAS"].dt.strftime("%d-%m-%Y")
-        fig_ch = px.scatter(choques, x="Fecha", y="N_Coords", size="N_Coords", color="N_Coords", 
-                            color_continuous_scale="Reds", range_color=[0, 6], title="Días con múltiples coordinadoras")
+        
+        fig_ch = px.scatter(
+            choques, 
+            x="Fecha", 
+            y="N_Coords", 
+            size="N_Coords", 
+            color="N_Coords", 
+            color_continuous_scale="Reds", 
+            range_color=[0, 6], 
+            title="Días con múltiples coordinadoras",
+            hover_data={"Coordinadoras": True, "Fecha": True, "N_Coords": True}
+        )
         st.plotly_chart(charts.update_chart_layout(fig_ch), use_container_width=True)
     else:
         st.info("No se detectaron días con múltiples coordinadoras.")
@@ -619,6 +654,336 @@ with tab5:
         st.markdown("### 🧹 Auditoría de Datos (Valores Faltantes)")
         df_q = resumen_calidad_datos(df_base) # Usamos la base completa para auditoría
         st.dataframe(df_q, hide_index=True, use_container_width=True)
+
+# =============================================================================
+# TAB CALENDARIO
+# =============================================================================
+with tab_calendario:
+    st.markdown("## 📅 Calendario Académico")
+    
+    col_c1, col_c2, col_c3, col_c4 = st.columns(4)
+    
+    # Selectores de Fecha
+    current_year = datetime.now().year
+    current_month = datetime.now().month
+    
+    years_avail = sorted(df_base["DIAS/FECHAS"].dt.year.unique())
+    if not years_avail: years_avail = [current_year]
+    
+    sel_cal_year = col_c1.selectbox("Año", years_avail, index=years_avail.index(current_year) if current_year in years_avail else 0, key="cal_year")
+    
+    # Nombre de meses
+    meses_nombres = ["Todos"] + list(utils.MESES_NOMBRE.values())
+    
+    # Index default: Mes actual
+    try:
+        idx_def = meses_nombres.index(utils.MESES_NOMBRE[current_month])
+    except:
+        idx_def = 0
+        
+    sel_cal_month_txt = col_c2.selectbox("Mes", meses_nombres, index=idx_def, key="cal_month")
+    
+    # Convertir mes texto a número
+    sel_cal_month = None
+    if sel_cal_month_txt != "Todos":
+        sel_cal_month = list(utils.MESES_NOMBRE.keys())[list(utils.MESES_NOMBRE.values()).index(sel_cal_month_txt)]
+    
+    # Filtro opcional de Coordinadora para ver SU calendario
+    coords_cal = sorted(df_base["COORDINADORA RESPONSABLE"].unique())
+    sel_cal_coord = col_c3.multiselect("Filtrar Coordinadora (Opcional)", coords_cal, key="cal_coord")
+    
+    # Filtro Programas (Dependiente de Coordinadora)
+    if sel_cal_coord:
+        # Si hay coord seleccionada, mostrar solo sus programas
+        progs_avail = sorted(df_base[df_base["COORDINADORA RESPONSABLE"].isin(sel_cal_coord)]["PROGRAMA"].unique())
+    else:
+        # Si no, mostrar todos
+        progs_avail = sorted(df_base["PROGRAMA"].unique())
+        
+    sel_cal_prog = col_c4.multiselect("Filtrar Programa (Opcional)", progs_avail, key="cal_prog")
+    
+    # --- FILTRAR DATA ---
+    mask_cal = (df_base["DIAS/FECHAS"].dt.year == sel_cal_year)
+    if sel_cal_month:
+        mask_cal &= (df_base["DIAS/FECHAS"].dt.month == sel_cal_month)
+    if sel_cal_coord:
+        mask_cal &= df_base["COORDINADORA RESPONSABLE"].isin(sel_cal_coord)
+    if sel_cal_prog:
+        mask_cal &= df_base["PROGRAMA"].isin(sel_cal_prog)
+    
+    df_cal = df_base[mask_cal].copy()
+    
+    # --- GENERAR CALENDARIO VISUAL ---
+    # --- GENERAR CALENDARIO VISUAL (Solo si hay un mes seleccionado) ---
+    if sel_cal_month:
+        # Pre-procesar eventos por día
+        events_map = {}
+        if not df_cal.empty:
+            df_cal["day_temp"] = df_cal["DIAS/FECHAS"].dt.day
+            # Agrupar por dia
+            for d, group in df_cal.groupby("day_temp"):
+                cols_to_map = ["PROGRAMA", "COORDINADORA RESPONSABLE"]
+                if "ASIGNATURA" in df_cal.columns:
+                    cols_to_map.append("ASIGNATURA")
+                if "HORARIO" in df_cal.columns:
+                    cols_to_map.append("HORARIO")
+                if "PROFESOR" in df_cal.columns:
+                    cols_to_map.append("PROFESOR")
+                if "SEDE" in df_cal.columns:
+                    cols_to_map.append("SEDE")
+                if "Modalidad_Calc" in df_cal.columns:
+                    cols_to_map.append("Modalidad_Calc")
+                events_map[d] = group[cols_to_map].to_dict("records")
+        
+        # Crear calendario HTML
+        cal_obj = calendar.Calendar(firstweekday=0) # 0 = Lunes
+        month_days = cal_obj.monthdayscalendar(sel_cal_year, sel_cal_month)
+        
+        # Estilos CSS Inyectados (Light Theme Excel-like)
+        st.markdown("""
+        <style>
+            .calendar-container {
+                background-color: #FFFFFF;
+                color: #262730;
+                padding: 20px;
+                border-radius: 8px;
+                font-family: 'Inter', sans-serif;
+                border: 1px solid #D6D6D9;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            }
+            .cal-header-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                margin-bottom: 20px;
+                border-bottom: 2px solid #009688; /* Teal underline */
+                padding-bottom: 10px;
+            }
+            .cal-month-name {
+                font-size: 32px;
+                font-weight: 800;
+                color: #005f56;
+                text-transform: uppercase;
+            }
+            .cal-year-num {
+                font-size: 24px;
+                font-weight: 600;
+                color: #666;
+            }
+            .weekdays-grid {
+                display: grid;
+                grid-template-columns: repeat(7, 1fr);
+                text-align: center;
+                font-weight: 700;
+                color: #262730;
+                margin-bottom: 5px;
+                font-size: 14px;
+                border-bottom: 1px solid #E6E6EA;
+                padding-bottom: 5px;
+            }
+            .days-grid {
+                display: grid;
+                grid-template-columns: repeat(7, 1fr);
+                gap: 1px; /* Grid lines effect */
+                background-color: #E6E6EA; /* Border color */
+                border: 1px solid #E6E6EA;
+            }
+            .day-cell {
+                background-color: #FFFFFF;
+                min-height: 80px; /* Taller cells */
+                padding: 8px;
+                font-size: 14px;
+                color: #444;
+                display: flex;
+                flex-direction: column;
+                justify-content: flex-start;
+                transition: background-color 0.2s;
+            }
+            .day-cell.empty {
+                background-color: #F9F9FA;
+            }
+            .day-cell.has-event {
+                background-color: #E1F5FE; /* Light Blue Highlight */
+            }
+            .day-cell.has-event:hover {
+                background-color: #B3E5FC;
+            }
+            .day-number {
+                font-weight: 600;
+                margin-bottom: 4px;
+            }
+            .event-dot {
+                height: 6px;
+                width: 6px;
+                background-color: #0288D1;
+                border-radius: 50%;
+                display: inline-block;
+                margin-right: 2px;
+            }
+            .event-item {
+                background-color: rgba(255,255,255,0.7);
+                border-left: 3px solid #0288D1;
+                padding: 2px 4px;
+                margin-top: 2px;
+                border-radius: 2px;
+                font-size: 10px;
+                line-height: 1.2;
+                overflow: hidden;
+                white-space: nowrap;
+                text-overflow: ellipsis;
+            }
+            .event-prog {
+                font-weight: 700;
+                color: #01579B;
+            }
+            .event-coord {
+                font-weight: 400;
+                color: #555;
+                font-size: 9px;
+            }
+            .event-time {
+                font-size: 10px;
+                font-weight: 700;
+                color: #D81B60; /* Pink/Reddish distinctive color */
+                margin-bottom: 2px;
+            }
+            .event-subj {
+                font-size: 9px;
+                color: #444;
+                font-style: italic;
+                margin-bottom: 2px;
+            }
+            .event-prof {
+                font-size: 9px;
+                color: #2e7d32; /* Greenish for teacher */
+                font-weight: 600;
+                margin-top: 1px;
+            }
+            .event-meta {
+                font-size: 8px;
+                color: #555;
+                margin-top: 1px;
+                border-top: 1px dotted #ccc;
+                padding-top: 1px;
+            }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        # Construir HTML
+        html_cal = f'<div class="calendar-container" translate="no">'
+        
+        # Custom Header
+        html_cal += f"""
+        <div class="cal-header-row">
+            <div class="cal-month-name">{sel_cal_month_txt}</div>
+            <div class="cal-year-num">{sel_cal_year}</div>
+        </div>
+        """
+        
+        # Headers
+        dias_semana_n = ["LUN.", "MAR.", "MIÉ.", "JUE.", "VIE.", "SÁB.", "DOM."]
+        html_cal += '<div class="weekdays-grid">'
+        for d in dias_semana_n:
+            html_cal += f'<div>{d}</div>'
+        html_cal += '</div>'
+        
+        # Days Grid
+        html_cal += '<div class="days-grid">'
+        for week in month_days:
+            for day in week:
+                if day == 0:
+                    html_cal += '<div class="day-cell empty"></div>'
+                else:
+                    day_events = events_map.get(day, [])
+                    css_class = "day-cell"
+                    content = f'<div class="day-number">{day}</div>'
+                    
+                    if day_events:
+                        css_class += " has-event"
+                        # Listar eventos (Max 3-4 para no explotar)
+                        for i, evt in enumerate(day_events):
+                            # Limpiar nombre programa
+                            prog_short = str(evt["PROGRAMA"])[:20] + "..." if len(str(evt["PROGRAMA"])) > 20 else str(evt["PROGRAMA"])
+                            coord_short = str(evt["COORDINADORA RESPONSABLE"]).split(" ")[0] # Primer nombre
+                            subj_short = ""
+                            if "ASIGNATURA" in evt:
+                                subj_raw = str(evt["ASIGNATURA"])
+                                subj_short = subj_raw[:25] + "..." if len(subj_raw) > 25 else subj_raw
+                            
+                            
+                            time_str = str(evt.get("HORARIO", ""))
+                            prof_str = str(evt.get("PROFESOR", ""))
+                            if prof_str and prof_str != "nan":
+                                parts = prof_str.split(" ")
+                                if len(parts) > 1:
+                                    prof_short = f"{parts[0]} {parts[1]}".title() # Nombre + Apellido
+                                else:
+                                    prof_short = prof_str.title()
+                            else:
+                                prof_short = ""
+                            
+                            sede_str = str(evt.get("SEDE", ""))
+                            mod_str = str(evt.get("Modalidad_Calc", ""))
+
+                            content += f'<div class="event-item" title="{evt["PROGRAMA"]} - {evt.get("ASIGNATURA","")} - {time_str}">'
+                            if time_str:
+                                content += f'<div class="event-time">{time_str}</div>'
+                            content += f'<div class="event-prog">{prog_short}</div>'
+                            if subj_short:
+                                content += f'<div class="event-subj">{subj_short}</div>'
+                            
+                            # Coordinadora + Profesor
+                            content += f'<div class="event-coord">{coord_short}</div>'
+                            if prof_short:
+                                content += f'<div class="event-prof">👨‍🏫 {prof_short}</div>'
+                                
+                            # Sede + Modalidad
+                            if sede_str or mod_str:
+                                content += f'<div class="event-meta">📍 {sede_str} • {mod_str}</div>'
+                            
+                            content += '</div>'
+                            
+                            if i >= 3: # Limitar visualización
+                                restantes = len(day_events) - (i + 1)
+                                if restantes > 0:
+                                    content += f'<div style="font-size:9px; color:#666; margin-top:2px;">+ {restantes} más...</div>'
+                                break
+
+                    html_cal += f'<div class="{css_class}">{content}</div>'
+                    
+        html_cal += '</div></div>' # end grid & container
+        
+        st.markdown(html_cal, unsafe_allow_html=True)
+    else:
+        st.info("ℹ️ Seleccione un mes específico para ver la vista de cuadrícula.")
+    
+    # --- DETALLE DEBAJO ---
+    st.markdown("---")
+    st.subheader(f"📝 Agenda: {sel_cal_month_txt}")
+    
+    if df_cal.empty:
+        st.info("No hay clases programadas para este mes (o filtro seleccionado).")
+    else:
+        # Preparar tabla detalle
+        df_view = df_cal.copy()
+        df_view["Día"] = df_view["DIAS/FECHAS"].dt.day
+        df_view["Fecha"] = df_view["DIAS/FECHAS"].dt.strftime("%d-%m-%Y")
+        
+        cols_show = ["Fecha", "HORARIO", "PROGRAMA", "COORDINADORA RESPONSABLE", "SEDE", "SALA", "PROFESOR"]
+        # Filtrar solo col existentes
+        cols_show = [c for c in cols_show if c in df_view.columns]
+        
+        st.dataframe(
+            df_view[cols_show].sort_values(["Fecha", "HORARIO"]),
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "PROGRAMA": st.column_config.TextColumn("Programa", width="large"),
+                "COORDINADORA RESPONSABLE": "Coordinadora",
+                "HORARIO": st.column_config.TextColumn("Horario", width="small")
+            }
+        )
+
 
 # =============================================================================
 # TAB 6: GESTIÓN (PROTEGIDO)
@@ -964,4 +1329,4 @@ with tab_validaciones:
                 st.success("✅ No se detectaron choques de horario para los profesores asignados.")
                 
         except Exception as e:
-            st.error(f"Error al procesar las fechas/horas para validación: {e}")
+            st.error(f"Error al procesar las fechas/horas para validación: {e}"
